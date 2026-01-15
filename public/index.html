@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tomasulo Simulator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .controls {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .instruction-input {
+            margin-bottom: 20px;
+        }
+
+        .instruction-input label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .instruction-entry {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .instruction-entry select,
+        .instruction-entry input {
+            padding: 10px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .instruction-entry select {
+            width: 120px;
+        }
+
+        .instruction-entry input {
+            width: 80px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            padding: 30px;
+        }
+
+        .panel {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-card .label {
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        table th,
+        table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        table th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+
+        table tr:hover {
+            background: #f1f3f5;
+        }
+
+        .busy {
+            background: #fff3cd !important;
+            font-weight: bold;
+        }
+
+        .ready {
+            background: #d4edda !important;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .status-issue {
+            background: #ffc107;
+            color: #856404;
+        }
+
+        .status-execute {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .status-write {
+            background: #28a745;
+            color: white;
+        }
+
+        .status-commit {
+            background: #6c757d;
+            color: white;
+        }
+
+        .instruction-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .instruction-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+
+            .instruction-entry {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Tomasulo Simulator</h1>
+            <p>Out-of-Order Execution with Reorder Buffer</p>
+        </div>
+
+        <div class="controls">
+            <div class="instruction-input">
+                <label>Instructions:</label>
+                <div id="instructionContainer">
+                    <div class="instruction-entry">
+                        <select class="inst-type">
+                            <option value="ADD">ADD</option>
+                            <option value="SUB">SUB</option>
+                            <option value="MULT">MULT</option>
+                            <option value="DIV">DIV</option>
+                            <option value="LOAD">LOAD</option>
+                            <option value="STORE">STORE</option>
+                        </select>
+                        <input type="text" class="inst-dest" placeholder="Dest (e.g., F1)" value="F1">
+                        <input type="text" class="inst-src1" placeholder="Src1 (e.g., F2)" value="F2">
+                        <input type="text" class="inst-src2" placeholder="Src2 (e.g., F3)" value="F3">
+                        <input type="number" class="inst-addr" placeholder="Address" style="display: none;">
+                        <button class="btn btn-danger" onclick="removeInstruction(this)">Remove</button>
+                    </div>
+                </div>
+                <button class="btn btn-secondary" onclick="addInstruction()">+ Add Instruction</button>
+                <button class="btn btn-primary" onclick="loadInstructions()">Load Instructions</button>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <button class="btn btn-success" onclick="stepForward()">▶ Step Forward</button>
+                <button class="btn btn-primary" onclick="stepBackward()">◀ Step Backward</button>
+                <button class="btn btn-secondary" onclick="reset()">Reset</button>
+                <button class="btn btn-primary" onclick="loadState()">Refresh State</button>
+            </div>
+        </div>
+
+        <div class="dashboard">
+            <div class="panel">
+                <h2>Statistics</h2>
+                <div class="stats" id="stats">
+                    <div class="stat-card">
+                        <div class="value" id="cycle">0</div>
+                        <div class="label">Cycle</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="value" id="issued">0</div>
+                        <div class="label">Issued</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="value" id="executed">0</div>
+                        <div class="label">Executed</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Instructions</h2>
+                <div class="instruction-list" id="instructionsList"></div>
+            </div>
+
+            <div class="panel" style="grid-column: 1 / -1;">
+                <h2>Reservation Stations</h2>
+                <table id="rsTable">
+                    <thead>
+                        <tr>
+                            <th>Station</th>
+                            <th>Busy</th>
+                            <th>Op</th>
+                            <th>Vj</th>
+                            <th>Vk</th>
+                            <th>Qj</th>
+                            <th>Qk</th>
+                            <th>A</th>
+                            <th>Dest (ROB)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rsBody"></tbody>
+                </table>
+            </div>
+
+            <div class="panel" style="grid-column: 1 / -1;">
+                <h2>Reorder Buffer (ROB)</h2>
+                <table id="robTable">
+                    <thead>
+                        <tr>
+                            <th>Entry</th>
+                            <th>Busy</th>
+                            <th>Instruction</th>
+                            <th>State</th>
+                            <th>Destination</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody id="robBody"></tbody>
+                </table>
+            </div>
+
+            <div class="panel">
+                <h2>Register File</h2>
+                <table id="rfTable">
+                    <thead>
+                        <tr>
+                            <th>Register</th>
+                            <th>Value</th>
+                            <th>Qi (ROB)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rfBody"></tbody>
+                </table>
+            </div>
+
+            <div class="panel">
+                <h2>Memory (Sample)</h2>
+                <div style="max-height: 300px; overflow-y: auto;">
+                    <table id="memTable">
+                        <thead>
+                            <tr>
+                                <th>Address</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody id="memBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        function updateInstructionInputs() {
+            document.querySelectorAll('.inst-type').forEach(select => {
+                select.addEventListener('change', function() {
+                    const entry = this.closest('.instruction-entry');
+                    const addrInput = entry.querySelector('.inst-addr');
+                    const src2Input = entry.querySelector('.inst-src2');
+                    
+                    if (this.value === 'LOAD' || this.value === 'STORE') {
+                        addrInput.style.display = 'block';
+                        src2Input.style.display = 'none';
+                    } else {
+                        addrInput.style.display = 'none';
+                        src2Input.style.display = 'block';
+                    }
+                });
+            });
+        }
+
+        function addInstruction() {
+            const container = document.getElementById('instructionContainer');
+            const newEntry = document.createElement('div');
+            newEntry.className = 'instruction-entry';
+            newEntry.innerHTML = `
+                <select class="inst-type">
+                    <option value="ADD">ADD</option>
+                    <option value="SUB">SUB</option>
+                    <option value="MULT">MULT</option>
+                    <option value="DIV">DIV</option>
+                    <option value="LOAD">LOAD</option>
+                    <option value="STORE">STORE</option>
+                </select>
+                <input type="text" class="inst-dest" placeholder="Dest (e.g., F1)">
+                <input type="text" class="inst-src1" placeholder="Src1 (e.g., F2)">
+                <input type="text" class="inst-src2" placeholder="Src2 (e.g., F3)">
+                <input type="number" class="inst-addr" placeholder="Address" style="display: none;">
+                <button class="btn btn-danger" onclick="removeInstruction(this)">Remove</button>
+            `;
+            container.appendChild(newEntry);
+            updateInstructionInputs();
+        }
+
+        function removeInstruction(btn) {
+            btn.closest('.instruction-entry').remove();
+        }
+
+        async function loadInstructions() {
+            const entries = document.querySelectorAll('.instruction-entry');
+            const instructions = [];
+
+            entries.forEach(entry => {
+                const type = entry.querySelector('.inst-type').value;
+                const dest = entry.querySelector('.inst-dest').value.trim();
+                const src1 = entry.querySelector('.inst-src1').value.trim();
+                const src2 = entry.querySelector('.inst-src2').value.trim();
+                const addr = entry.querySelector('.inst-addr').value;
+
+                if (!dest) return;
+
+                const inst = {
+                    type: type,
+                    dest: dest,
+                    src1: src1 || null,
+                    src2: (type !== 'LOAD' && type !== 'STORE' && src2) ? src2 : null,
+                    address: (type === 'LOAD' || type === 'STORE') && addr ? parseInt(addr) : null
+                };
+
+                instructions.push(inst);
+            });
+
+            try {
+                const response = await fetch(`${API_BASE}/instructions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(instructions)
+                });
+
+                if (response.ok) {
+                    await loadState();
+                } else {
+                    alert('Failed to load instructions');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error loading instructions');
+            }
+        }
+
+        async function stepForward() {
+            try {
+                const response = await fetch(`${API_BASE}/step-forward`, {
+                    method: 'POST'
+                });
+                const state = await response.json();
+                updateUI(state);
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error stepping forward');
+            }
+        }
+
+        async function stepBackward() {
+            try {
+                const response = await fetch(`${API_BASE}/step-backward`, {
+                    method: 'POST'
+                });
+                const state = await response.json();
+                if (state.error) {
+                    alert(state.error);
+                } else {
+                    updateUI(state);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error stepping backward');
+            }
+        }
+
+        async function reset() {
+            try {
+                const response = await fetch(`${API_BASE}/reset`, {
+                    method: 'POST'
+                });
+                const state = await response.json();
+                updateUI(state);
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error resetting');
+            }
+        }
+
+        async function loadState() {
+            try {
+                const response = await fetch(`${API_BASE}/state`);
+                const state = await response.json();
+                updateUI(state);
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error loading state');
+            }
+        }
+
+        function updateUI(state) {
+            // Update statistics
+            document.getElementById('cycle').textContent = state.cycle || 0;
+            document.getElementById('issued').textContent = state.stats?.instructions_issued || 0;
+            document.getElementById('executed').textContent = state.stats?.instructions_executed || 0;
+
+            // Update instructions list
+            const instList = document.getElementById('instructionsList');
+            instList.innerHTML = state.instructions?.map((inst, idx) => {
+                const status = idx < (state.stats?.instructions_issued || 0) ? '✓' : '○';
+                return `<div class="instruction-item">${status} ${inst.type} ${inst.dest} = ${inst.src1 || ''} ${inst.src2 ? inst.src2 : ''} ${inst.address !== null ? `[${inst.address}]` : ''}</div>`;
+            }).join('') || '';
+
+            // Update Reservation Stations
+            const rsBody = document.getElementById('rsBody');
+            rsBody.innerHTML = state.reservation_stations?.map(rs => {
+                const busyClass = rs.busy ? 'busy' : '';
+                return `<tr class="${busyClass}">
+                    <td>${rs.name}</td>
+                    <td>${rs.busy ? 'Yes' : 'No'}</td>
+                    <td>${rs.op || '-'}</td>
+                    <td>${rs.vj !== null && rs.vj !== undefined ? rs.vj : '-'}</td>
+                    <td>${rs.vk !== null && rs.vk !== undefined ? rs.vk : '-'}</td>
+                    <td>${rs.qj || '-'}</td>
+                    <td>${rs.qk || '-'}</td>
+                    <td>${rs.a !== null && rs.a !== undefined ? rs.a : '-'}</td>
+                    <td>${rs.dest !== null && rs.dest !== undefined ? rs.dest : '-'}</td>
+                </tr>`;
+            }).join('') || '';
+
+            // Update Reorder Buffer
+            const robBody = document.getElementById('robBody');
+            robBody.innerHTML = state.reorder_buffer?.map(rob => {
+                const busyClass = rob.busy ? 'busy' : '';
+                const statusClass = `status-${rob.state?.toLowerCase().replace(' ', '-') || ''}`;
+                return `<tr class="${busyClass}">
+                    <td>${rob.entry}</td>
+                    <td>${rob.busy ? 'Yes' : 'No'}</td>
+                    <td>${rob.instruction || '-'}</td>
+                    <td><span class="status-badge ${statusClass}">${rob.state || '-'}</span></td>
+                    <td>${rob.destination || '-'}</td>
+                    <td>${rob.value !== null && rob.value !== undefined ? rob.value : '-'}</td>
+                </tr>`;
+            }).join('') || '';
+
+            // Update Register File
+            const rfBody = document.getElementById('rfBody');
+            rfBody.innerHTML = state.register_file?.map(rf => {
+                const waitingClass = rf.q ? 'busy' : '';
+                return `<tr class="${waitingClass}">
+                    <td>${rf.name}</td>
+                    <td>${rf.value}</td>
+                    <td>${rf.q || '-'}</td>
+                </tr>`;
+            }).join('') || '';
+
+            // Update Memory (show first 20 addresses)
+            const memBody = document.getElementById('memBody');
+            const memoryEntries = Object.entries(state.memory || {})
+                .slice(0, 20)
+                .map(([addr, val]) => `<tr><td>${addr}</td><td>${val}</td></tr>`)
+                .join('');
+            memBody.innerHTML = memoryEntries;
+        }
+
+        // Initialize
+        updateInstructionInputs();
+        loadState();
+    </script>
+</body>
+</html>
