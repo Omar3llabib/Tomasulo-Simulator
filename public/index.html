@@ -3,411 +3,239 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tomasulo Simulator</title>
+    <title>Tomasulo Algorithm Dashboard - Command Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'emerald': {
+                            'glow': '#10b981',
+                            'dark': '#065f46',
+                        },
+                        'deep-blue': {
+                            'dark': '#1e3a8a',
+                            'light': '#3b82f6',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-            color: #333;
+            font-family: 'Inter', sans-serif;
         }
-
-        .container {
-            max-width: 1600px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
+        
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
         }
-
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
+        
+        .glow-emerald {
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.5), 0 0 40px rgba(16, 185, 129, 0.3);
         }
-
-        .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
+        
+        .glow-blue {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3);
         }
-
-        .header p {
-            opacity: 0.9;
-            font-size: 1.1em;
+        
+        .glow-emerald-text {
+            text-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
         }
-
-        .controls {
-            padding: 30px;
-            background: #f8f9fa;
-            border-bottom: 2px solid #e9ecef;
+        
+        .table-row-hover:hover {
+            background-color: rgba(16, 185, 129, 0.1);
         }
-
-        .instruction-input {
-            margin-bottom: 20px;
+        
+        .status-tag {
+            animation: pulse-glow 2s ease-in-out infinite;
         }
-
-        .instruction-input label {
-            display: block;
-            margin-bottom: 10px;
-            font-weight: 600;
-            color: #495057;
+        
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
         }
-
-        .instruction-entry {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-            align-items: center;
+        
+        .sidebar-scroll::-webkit-scrollbar {
+            width: 6px;
         }
-
-        .instruction-entry select,
-        .instruction-entry input {
-            padding: 10px;
-            border: 2px solid #dee2e6;
-            border-radius: 8px;
-            font-size: 14px;
+        
+        .sidebar-scroll::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
         }
-
-        .instruction-entry select {
-            width: 120px;
+        
+        .sidebar-scroll::-webkit-scrollbar-thumb {
+            background: rgba(16, 185, 129, 0.5);
+            border-radius: 3px;
         }
-
-        .instruction-entry input {
-            width: 80px;
+        
+        .main-scroll::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
         }
-
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            margin: 5px;
+        
+        .main-scroll::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
         }
-
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #5568d3;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn-success {
-            background: #28a745;
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #218838;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
-        }
-
-        .btn-danger {
-            background: #dc3545;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
-        }
-
-        .btn-secondary {
-            background: #6c757d;
-            color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #5a6268;
-            transform: translateY(-2px);
-        }
-
-        .dashboard {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 20px;
-            padding: 30px;
-        }
-
-        .panel {
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .panel h2 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.5em;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 10px;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-
-        .stat-card .value {
-            font-size: 2em;
-            font-weight: bold;
-            color: #667eea;
-        }
-
-        .stat-card .label {
-            color: #6c757d;
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        table th,
-        table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #dee2e6;
-        }
-
-        table th {
-            background: #667eea;
-            color: white;
-            font-weight: 600;
-        }
-
-        table tr:hover {
-            background: #f1f3f5;
-        }
-
-        .busy {
-            background: #fff3cd !important;
-            font-weight: bold;
-        }
-
-        .ready {
-            background: #d4edda !important;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }
-
-        .status-issue {
-            background: #ffc107;
-            color: #856404;
-        }
-
-        .status-execute {
-            background: #17a2b8;
-            color: white;
-        }
-
-        .status-write {
-            background: #28a745;
-            color: white;
-        }
-
-        .status-commit {
-            background: #6c757d;
-            color: white;
-        }
-
-        .instruction-list {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .instruction-item {
-            padding: 10px;
-            margin: 5px 0;
-            background: white;
-            border-radius: 6px;
-            border-left: 4px solid #667eea;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 20px;
-            color: #6c757d;
-        }
-
-        @media (max-width: 768px) {
-            .dashboard {
-                grid-template-columns: 1fr;
-            }
-
-            .instruction-entry {
-                flex-wrap: wrap;
-            }
+        
+        .main-scroll::-webkit-scrollbar-thumb {
+            background: rgba(59, 130, 246, 0.5);
+            border-radius: 4px;
         }
     </style>
 </head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚀 Tomasulo Simulator</h1>
-            <p>Out-of-Order Execution with Reorder Buffer</p>
-        </div>
-
-        <div class="controls">
-            <div class="instruction-input">
-                <label>Instructions:</label>
-                <div id="instructionContainer">
-                    <div class="instruction-entry">
-                        <select class="inst-type">
-                            <option value="ADD">ADD</option>
-                            <option value="SUB">SUB</option>
-                            <option value="MULT">MULT</option>
-                            <option value="DIV">DIV</option>
-                            <option value="LOAD">LOAD</option>
-                            <option value="STORE">STORE</option>
-                        </select>
-                        <input type="text" class="inst-dest" placeholder="Dest (e.g., F1)" value="F1">
-                        <input type="text" class="inst-src1" placeholder="Src1 (e.g., F2)" value="F2">
-                        <input type="text" class="inst-src2" placeholder="Src2 (e.g., F3)" value="F3">
-                        <input type="number" class="inst-addr" placeholder="Address" style="display: none;">
-                        <button class="btn btn-danger" onclick="removeInstruction(this)">Remove</button>
-                    </div>
-                </div>
-                <button class="btn btn-secondary" onclick="addInstruction()">+ Add Instruction</button>
-                <button class="btn btn-primary" onclick="loadInstructions()">Load Instructions</button>
+<body class="bg-gray-900 text-gray-100">
+    <!-- Top Navigation Bar -->
+    <nav class="bg-gray-800 border-b border-emerald-glow/30 px-6 py-4 shadow-lg">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <div class="w-3 h-3 bg-emerald-glow rounded-full glow-emerald"></div>
+                <h1 class="text-2xl font-bold text-white mono">TOMASULO<span class="text-emerald-glow glow-emerald-text">_CPU</span>_DASHBOARD</h1>
             </div>
-
-            <div style="margin-top: 20px;">
-                <button class="btn btn-success" onclick="stepForward()">▶ Step Forward</button>
-                <button class="btn btn-primary" onclick="stepBackward()">◀ Step Backward</button>
-                <button class="btn btn-secondary" onclick="reset()">Reset</button>
-                <button class="btn btn-primary" onclick="loadState()">Refresh State</button>
+            <div class="flex items-center space-x-4">
+                <div class="text-sm text-gray-400 mono">
+                    <span class="text-emerald-glow">CYCLE:</span> <span id="navCycle" class="text-white font-semibold">0</span>
+                </div>
+                <div class="w-2 h-2 bg-emerald-glow rounded-full glow-emerald animate-pulse"></div>
             </div>
         </div>
+    </nav>
 
-        <div class="dashboard">
-            <div class="panel">
-                <h2>Statistics</h2>
-                <div class="stats" id="stats">
-                    <div class="stat-card">
-                        <div class="value" id="cycle">0</div>
-                        <div class="label">Cycle</div>
+    <div class="flex h-[calc(100vh-73px)]">
+        <!-- Left Sidebar -->
+        <aside class="w-80 bg-gray-800/50 border-r border-emerald-glow/20 flex flex-col">
+            <div class="p-4 border-b border-emerald-glow/20">
+                <h2 class="text-lg font-semibold text-emerald-glow mono uppercase tracking-wider">Inputs</h2>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-6">
+                <!-- Assembly Code Section -->
+                <div>
+                    <h3 class="text-sm font-semibold text-blue-400 mb-3 mono uppercase">Assembly Code</h3>
+                    <div class="space-y-3">
+                        <textarea id="programTextarea" rows="12" class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none resize-y" placeholder="Enter your program instructions here...&#10;&#10;Example:&#10;ADD F1 F2 F3&#10;SUB F4 F5 F6&#10;LOAD F7 100&#10;STORE F8 200"></textarea>
+                        <button class="w-full bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-glow/50 text-emerald-glow px-3 py-2 rounded text-sm font-semibold mono transition-colors glow-emerald" onclick="loadProgram()">Load Program</button>
                     </div>
-                    <div class="stat-card">
-                        <div class="value" id="issued">0</div>
-                        <div class="label">Issued</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="value" id="executed">0</div>
-                        <div class="label">Executed</div>
+                </div>
+
+                <!-- FU Config Section -->
+                <div>
+                    <h3 class="text-sm font-semibold text-blue-400 mb-3 mono uppercase">Functional Unit Config</h3>
+                    <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-gray-400 mono">Add/Sub Units</span>
+                            <span class="text-sm text-emerald-glow font-semibold mono">3</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-gray-400 mono">Mult/Div Units</span>
+                            <span class="text-sm text-emerald-glow font-semibold mono">2</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-gray-400 mono">Load/Store Units</span>
+                            <span class="text-sm text-emerald-glow font-semibold mono">2</span>
+                        </div>
                     </div>
                 </div>
             </div>
+        </aside>
 
-            <div class="panel">
-                <h2>Instructions</h2>
-                <div class="instruction-list" id="instructionsList"></div>
+        <!-- Main Content Area -->
+        <main class="flex-1 overflow-y-auto main-scroll bg-gray-900 p-6">
+            <div class="mb-4">
+                <h2 class="text-xl font-bold text-white mono uppercase tracking-wider border-b border-blue-600/30 pb-2">
+                    <span class="text-blue-400">Live</span> <span class="text-emerald-glow">Tables</span>
+                </h2>
             </div>
 
-            <div class="panel" style="grid-column: 1 / -1;">
-                <h2>Reservation Stations</h2>
-                <table id="rsTable">
-                    <thead>
-                        <tr>
-                            <th>Station</th>
-                            <th>Busy</th>
-                            <th>Op</th>
-                            <th>Vj</th>
-                            <th>Vk</th>
-                            <th>Qj</th>
-                            <th>Qk</th>
-                            <th>A</th>
-                            <th>Dest (ROB)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="rsBody"></tbody>
-                </table>
-            </div>
+            <div class="space-y-6">
+                <!-- Instruction Queue Table -->
+                <div class="bg-gray-800/50 border border-emerald-glow/20 rounded-lg overflow-hidden shadow-xl">
+                    <div class="bg-gray-800 px-4 py-3 border-b border-emerald-glow/20">
+                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Instruction Queue</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm mono">
+                            <thead class="bg-gray-800/80">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">ID</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Instruction</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Issue</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Execute</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Write Result</th>
+                                </tr>
+                            </thead>
+                            <tbody id="instructionQueueBody" class="divide-y divide-gray-700">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
-            <div class="panel" style="grid-column: 1 / -1;">
-                <h2>Reorder Buffer (ROB)</h2>
-                <table id="robTable">
-                    <thead>
-                        <tr>
-                            <th>Entry</th>
-                            <th>Busy</th>
-                            <th>Instruction</th>
-                            <th>State</th>
-                            <th>Destination</th>
-                            <th>Value</th>
-                        </tr>
-                    </thead>
-                    <tbody id="robBody"></tbody>
-                </table>
-            </div>
+                <!-- Reservation Stations Table -->
+                <div class="bg-gray-800/50 border border-emerald-glow/20 rounded-lg overflow-hidden shadow-xl">
+                    <div class="bg-gray-800 px-4 py-3 border-b border-emerald-glow/20">
+                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Reservation Stations</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm mono">
+                            <thead class="bg-gray-800/80">
+                                <tr>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Time</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Name</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Busy</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Op</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Vj</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Vk</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Qj</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Qk</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Dest</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rsBody" class="divide-y divide-gray-700">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
-            <div class="panel">
-                <h2>Register File</h2>
-                <table id="rfTable">
-                    <thead>
-                        <tr>
-                            <th>Register</th>
-                            <th>Value</th>
-                            <th>Qi (ROB)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="rfBody"></tbody>
-                </table>
-            </div>
-
-            <div class="panel">
-                <h2>Memory (Sample)</h2>
-                <div style="max-height: 300px; overflow-y: auto;">
-                    <table id="memTable">
-                        <thead>
-                            <tr>
-                                <th>Address</th>
-                                <th>Value</th>
-                            </tr>
-                        </thead>
-                        <tbody id="memBody"></tbody>
-                    </table>
+                <!-- Register File Grid -->
+                <div class="bg-gray-800/50 border border-emerald-glow/20 rounded-lg overflow-hidden shadow-xl">
+                    <div class="bg-gray-800 px-4 py-3 border-b border-emerald-glow/20">
+                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Register File (F0 - F31)</h3>
+                    </div>
+                    <div class="p-4">
+                        <div id="rfBody" class="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-16 gap-3">
+                            <!-- Dynamic content -->
+                        </div>
+                    </div>
                 </div>
             </div>
+        </main>
+    </div>
+
+    <!-- Control Buttons at Bottom -->
+    <div class="fixed bottom-0 left-0 right-0 bg-gray-800/95 border-t border-emerald-glow/30 px-6 py-4 shadow-2xl backdrop-blur-sm">
+        <div class="flex items-center justify-center space-x-6">
+            <button onclick="stepBackward()" class="px-8 py-4 bg-deep-blue-dark hover:bg-deep-blue-dark/80 border-2 border-deep-blue-light text-white font-bold text-lg mono rounded-lg transition-all transform hover:scale-105 glow-blue">
+                ◀ STEP BACKWARD
+            </button>
+            <button onclick="stepForward()" class="px-8 py-4 bg-emerald-dark hover:bg-emerald-dark/80 border-2 border-emerald-glow text-white font-bold text-lg mono rounded-lg transition-all transform hover:scale-105 glow-emerald">
+                STEP FORWARD ▶
+            </button>
+            <button onclick="reset()" class="px-6 py-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 font-semibold text-sm mono rounded-lg transition-all">
+                RESET
+            </button>
+            <button onclick="loadState()" class="px-6 py-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 font-semibold text-sm mono rounded-lg transition-all">
+                REFRESH
+            </button>
         </div>
     </div>
+
+    <div class="h-24"></div> <!-- Spacer for fixed bottom bar -->
 
     <script>
         const API_BASE = '/api';
@@ -433,9 +261,9 @@
         function addInstruction() {
             const container = document.getElementById('instructionContainer');
             const newEntry = document.createElement('div');
-            newEntry.className = 'instruction-entry';
+            newEntry.className = 'instruction-entry bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-2';
             newEntry.innerHTML = `
-                <select class="inst-type">
+                <select class="inst-type w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none">
                     <option value="ADD">ADD</option>
                     <option value="SUB">SUB</option>
                     <option value="MULT">MULT</option>
@@ -443,11 +271,11 @@
                     <option value="LOAD">LOAD</option>
                     <option value="STORE">STORE</option>
                 </select>
-                <input type="text" class="inst-dest" placeholder="Dest (e.g., F1)">
-                <input type="text" class="inst-src1" placeholder="Src1 (e.g., F2)">
-                <input type="text" class="inst-src2" placeholder="Src2 (e.g., F3)">
-                <input type="number" class="inst-addr" placeholder="Address" style="display: none;">
-                <button class="btn btn-danger" onclick="removeInstruction(this)">Remove</button>
+                <input type="text" class="inst-dest w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none" placeholder="Dest (F1)">
+                <input type="text" class="inst-src1 w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none" placeholder="Src1 (F2)">
+                <input type="text" class="inst-src2 w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none" placeholder="Src2 (F3)">
+                <input type="number" class="inst-addr w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none" placeholder="Address" style="display: none;">
+                <button class="w-full bg-red-600/20 hover:bg-red-600/30 border border-red-600/50 text-red-400 px-3 py-1.5 rounded text-xs font-semibold mono transition-colors" onclick="removeInstruction(this)">Remove</button>
             `;
             container.appendChild(newEntry);
             updateInstructionInputs();
@@ -457,45 +285,30 @@
             btn.closest('.instruction-entry').remove();
         }
 
-        async function loadInstructions() {
-            const entries = document.querySelectorAll('.instruction-entry');
-            const instructions = [];
+        async function loadProgram() {
+            const textarea = document.getElementById('programTextarea');
+            const programText = textarea.value.trim();
 
-            entries.forEach(entry => {
-                const type = entry.querySelector('.inst-type').value;
-                const dest = entry.querySelector('.inst-dest').value.trim();
-                const src1 = entry.querySelector('.inst-src1').value.trim();
-                const src2 = entry.querySelector('.inst-src2').value.trim();
-                const addr = entry.querySelector('.inst-addr').value;
-
-                if (!dest) return;
-
-                const inst = {
-                    type: type,
-                    dest: dest,
-                    src1: src1 || null,
-                    src2: (type !== 'LOAD' && type !== 'STORE' && src2) ? src2 : null,
-                    address: (type === 'LOAD' || type === 'STORE') && addr ? parseInt(addr) : null
-                };
-
-                instructions.push(inst);
-            });
+            if (!programText) {
+                alert('Please enter a program in the text area');
+                return;
+            }
 
             try {
-                const response = await fetch(`${API_BASE}/instructions`, {
+                const response = await fetch(`${API_BASE}/load_program`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(instructions)
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: programText
                 });
 
                 if (response.ok) {
                     await loadState();
                 } else {
-                    alert('Failed to load instructions');
+                    alert('Failed to load program');
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Error loading instructions');
+                alert('Error loading program');
             }
         }
 
@@ -553,73 +366,101 @@
             }
         }
 
-        function updateUI(state) {
-            // Update statistics
-            document.getElementById('cycle').textContent = state.cycle || 0;
-            document.getElementById('issued').textContent = state.stats?.instructions_issued || 0;
-            document.getElementById('executed').textContent = state.stats?.instructions_executed || 0;
+        function formatInstruction(inst) {
+            if (inst.type === 'LOAD') {
+                return `${inst.type} ${inst.dest} = [${inst.address}]`;
+            } else if (inst.type === 'STORE') {
+                return `${inst.type} [${inst.address}] = ${inst.src1}`;
+            } else {
+                return `${inst.type} ${inst.dest} = ${inst.src1 || ''} ${inst.src2 ? '+ ' + inst.src2 : ''}`;
+            }
+        }
 
-            // Update instructions list
-            const instList = document.getElementById('instructionsList');
-            instList.innerHTML = state.instructions?.map((inst, idx) => {
-                const status = idx < (state.stats?.instructions_issued || 0) ? '✓' : '○';
-                return `<div class="instruction-item">${status} ${inst.type} ${inst.dest} = ${inst.src1 || ''} ${inst.src2 ? inst.src2 : ''} ${inst.address !== null ? `[${inst.address}]` : ''}</div>`;
-            }).join('') || '';
+        function updateUI(state) {
+            // Update nav cycle
+            document.getElementById('navCycle').textContent = state.cycle || 0;
+
+            // Update Instruction Queue
+            const instQueueBody = document.getElementById('instructionQueueBody');
+            if (state.instructions && state.instructions.length > 0) {
+                const issuedCount = state.stats?.instructions_issued || 0;
+                const executedCount = state.stats?.instructions_executed || 0;
+                const writtenCount = state.stats?.instructions_written || 0;
+                
+                instQueueBody.innerHTML = state.instructions.map((inst, idx) => {
+                    const issueStatus = idx < issuedCount ? '<span class="text-emerald-glow status-tag">✓</span>' : '<span class="text-gray-600">-</span>';
+                    const execStatus = idx < executedCount ? '<span class="text-blue-400 status-tag">✓</span>' : '<span class="text-gray-600">-</span>';
+                    const writeStatus = idx < writtenCount ? '<span class="text-emerald-glow status-tag">✓</span>' : '<span class="text-gray-600">-</span>';
+                    
+                    return `
+                        <tr class="table-row-hover">
+                            <td class="px-4 py-3 text-gray-300">${idx + 1}</td>
+                            <td class="px-4 py-3 text-gray-100">${formatInstruction(inst)}</td>
+                            <td class="px-4 py-3 text-center">${issueStatus}</td>
+                            <td class="px-4 py-3 text-center">${execStatus}</td>
+                            <td class="px-4 py-3 text-center">${writeStatus}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                instQueueBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No instructions loaded</td></tr>';
+            }
 
             // Update Reservation Stations
             const rsBody = document.getElementById('rsBody');
-            rsBody.innerHTML = state.reservation_stations?.map(rs => {
-                const busyClass = rs.busy ? 'busy' : '';
-                return `<tr class="${busyClass}">
-                    <td>${rs.name}</td>
-                    <td>${rs.busy ? 'Yes' : 'No'}</td>
-                    <td>${rs.op || '-'}</td>
-                    <td>${rs.vj !== null && rs.vj !== undefined ? rs.vj : '-'}</td>
-                    <td>${rs.vk !== null && rs.vk !== undefined ? rs.vk : '-'}</td>
-                    <td>${rs.qj || '-'}</td>
-                    <td>${rs.qk || '-'}</td>
-                    <td>${rs.a !== null && rs.a !== undefined ? rs.a : '-'}</td>
-                    <td>${rs.dest !== null && rs.dest !== undefined ? rs.dest : '-'}</td>
-                </tr>`;
-            }).join('') || '';
-
-            // Update Reorder Buffer
-            const robBody = document.getElementById('robBody');
-            robBody.innerHTML = state.reorder_buffer?.map(rob => {
-                const busyClass = rob.busy ? 'busy' : '';
-                const statusClass = `status-${rob.state?.toLowerCase().replace(' ', '-') || ''}`;
-                return `<tr class="${busyClass}">
-                    <td>${rob.entry}</td>
-                    <td>${rob.busy ? 'Yes' : 'No'}</td>
-                    <td>${rob.instruction || '-'}</td>
-                    <td><span class="status-badge ${statusClass}">${rob.state || '-'}</span></td>
-                    <td>${rob.destination || '-'}</td>
-                    <td>${rob.value !== null && rob.value !== undefined ? rob.value : '-'}</td>
-                </tr>`;
-            }).join('') || '';
+            if (state.reservation_stations && state.reservation_stations.length > 0) {
+                rsBody.innerHTML = state.reservation_stations.map(rs => {
+                    const busyClass = rs.busy ? 'text-emerald-glow font-semibold' : 'text-gray-500';
+                    const rowClass = rs.busy ? 'bg-emerald-900/10' : '';
+                    
+                    return `
+                        <tr class="table-row-hover ${rowClass}">
+                            <td class="px-4 py-3 text-center text-gray-400">${rs.time !== undefined && rs.time !== null ? rs.time : '-'}</td>
+                            <td class="px-4 py-3 text-gray-300 font-mono">${rs.name}</td>
+                            <td class="px-4 py-3 text-center ${busyClass}">${rs.busy ? 'Yes' : 'No'}</td>
+                            <td class="px-4 py-3 text-center text-gray-400">${rs.op || '-'}</td>
+                            <td class="px-4 py-3 text-center text-gray-300 font-mono">${rs.vj !== null && rs.vj !== undefined ? rs.vj : '-'}</td>
+                            <td class="px-4 py-3 text-center text-gray-300 font-mono">${rs.vk !== null && rs.vk !== undefined ? rs.vk : '-'}</td>
+                            <td class="px-4 py-3 text-center text-gray-400 font-mono">${rs.qj || '-'}</td>
+                            <td class="px-4 py-3 text-center text-gray-400 font-mono">${rs.qk || '-'}</td>
+                            <td class="px-4 py-3 text-center text-gray-400 font-mono">${rs.dest !== null && rs.dest !== undefined ? rs.dest : '-'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                rsBody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-gray-500">No reservation stations available</td></tr>';
+            }
 
             // Update Register File
             const rfBody = document.getElementById('rfBody');
-            rfBody.innerHTML = state.register_file?.map(rf => {
-                const waitingClass = rf.q ? 'busy' : '';
-                return `<tr class="${waitingClass}">
-                    <td>${rf.name}</td>
-                    <td>${rf.value}</td>
-                    <td>${rf.q || '-'}</td>
-                </tr>`;
-            }).join('') || '';
-
-            // Update Memory (show first 20 addresses)
-            const memBody = document.getElementById('memBody');
-            const memoryEntries = Object.entries(state.memory || {})
-                .slice(0, 20)
-                .map(([addr, val]) => `<tr><td>${addr}</td><td>${val}</td></tr>`)
-                .join('');
-            memBody.innerHTML = memoryEntries;
+            if (state.register_file && state.register_file.length > 0) {
+                rfBody.innerHTML = state.register_file.map(rf => {
+                    const hasQi = rf.q && rf.q !== '-';
+                    const statusColor = hasQi ? 'border-blue-400/50 bg-blue-900/20' : 'border-gray-700 bg-gray-900/30';
+                    const statusText = hasQi ? `<span class="text-xs text-blue-400 mono">Qi: ${rf.q}</span>` : '';
+                    
+                    return `
+                        <div class="bg-gray-900/50 ${statusColor} border rounded-lg p-2 text-center">
+                            <div class="text-xs text-emerald-glow font-semibold mono mb-1">${rf.name}</div>
+                            <div class="text-sm text-gray-200 font-mono">${rf.value}</div>
+                            ${statusText}
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                // Generate F0-F31 if register_file is not available
+                rfBody.innerHTML = Array.from({length: 32}, (_, i) => {
+                    return `
+                        <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-2 text-center">
+                            <div class="text-xs text-emerald-glow font-semibold mono mb-1">F${i}</div>
+                            <div class="text-sm text-gray-200 font-mono">0</div>
+                        </div>
+                    `;
+                }).join('');
+            }
         }
 
         // Initialize
-        updateInstructionInputs();
         loadState();
     </script>
 </body>
