@@ -54,6 +54,7 @@ class ReservationStation(BaseModel):
     a: Optional[int] = None
     dest: Optional[int] = None
     time: Optional[int] = None  # For UI display
+    cdb_available_cycle: Optional[int] = None  # Track when CDB value becomes available
 
 
 class ReorderBufferEntry(BaseModel):
@@ -96,14 +97,68 @@ class TomasuloState(BaseModel):
 class TomasuloEngine:
     def __init__(self):
         self.latencies = {
-            "ADD": 1, "SUB": 1, "MULT": 3, "DIV": 3, 
-            "LOAD": 2, "STORE": 1, "BRANCH": 1
+            "ADD": 1, "SUB": 1, "MULT": 10, "DIV": 40, 
+            "LOAD": 1, "STORE": 1, "BRANCH": 1
         }
         self.max_unroll_limit = 5  # Safety limit for loop unrolling
+        
+        # Hardware configuration
+        self.issue_width = 1
+        self.cdb_write_limit = 1
+        self.fu_pipelining = True
+        
         self.reset()
     
+    def set_latencies(self, load_store: int = 2, add_sub: int = 2, mult: int = 10, div: int = 40):
+        """Set functional unit latencies"""
+        self.latencies.update({
+            "LOAD": load_store,
+            "STORE": load_store,
+            "ADD": add_sub,
+            "SUB": add_sub,
+            "MULT": mult,
+            "DIV": div
+        })
+        print(f"Updated latencies: LOAD/STORE={load_store}, ADD/SUB={add_sub}, MULT={mult}, DIV={div}")
+    
+    def configure_hardware(self, issue_width: int = 1, cdb_write_limit: int = 1, fu_pipelining: bool = True):
+        """Configure hardware settings"""
+        self.issue_width = issue_width
+        self.cdb_write_limit = cdb_write_limit
+        self.fu_pipelining = fu_pipelining
+        print(f"Hardware config: issue_width={issue_width}, cdb_write_limit={cdb_write_limit}, fu_pipelining={fu_pipelining}")
+    
+    def configure_reservation_stations(self, int_count: int = 3, load_count: int = 2, 
+                                     store_count: int = 2, fp_add_count: int = 2, fp_mult_count: int = 2):
+        """Configure reservation station counts and rebuild RS array"""
+        new_reservation_stations = []
+        
+        # Create integer stations
+        for i in range(int_count):
+            new_reservation_stations.append(ReservationStation(name=f"INT{i+1}"))
+        
+        # Create load stations
+        for i in range(load_count):
+            new_reservation_stations.append(ReservationStation(name=f"LOAD{i+1}"))
+        
+        # Create store stations
+        for i in range(store_count):
+            new_reservation_stations.append(ReservationStation(name=f"STORE{i+1}"))
+        
+        # Create FP Add stations
+        for i in range(fp_add_count):
+            new_reservation_stations.append(ReservationStation(name=f"FP_ADD{i+1}"))
+        
+        # Create FP Mult stations
+        for i in range(fp_mult_count):
+            new_reservation_stations.append(ReservationStation(name=f"FP_MULT{i+1}"))
+        
+        self.reservation_stations = new_reservation_stations
+        print(f"RS config: INT={int_count}, LOAD={load_count}, STORE={store_count}, FP_ADD={fp_add_count}, FP_MULT={fp_mult_count}")
+        print(f"Total reservation stations: {len(self.reservation_stations)}")
+    
     def reset(self):
-        self.current_cycle = 0
+        self.current_cycle = 1  # Start at Cycle 1 per textbook standards
         self.instruction_list: List[Instruction] = []
         self.state_history: List[TomasuloState] = []
         self.instruction_counter = 0
@@ -121,19 +176,21 @@ class TomasuloEngine:
         
         # Reservation Stations
         self.reservation_stations = [
-            ReservationStation(name="ADD1"),
-            ReservationStation(name="ADD2"),
-            ReservationStation(name="ADD3"),
-            ReservationStation(name="MULT1"),
-            ReservationStation(name="MULT2"),
+            ReservationStation(name="INT1"),
+            ReservationStation(name="INT2"),
+            ReservationStation(name="INT3"),
+            ReservationStation(name="FP_ADD1"),
+            ReservationStation(name="FP_ADD2"),
+            ReservationStation(name="FP_MULT1"),
+            ReservationStation(name="FP_MULT2"),
             ReservationStation(name="LOAD1"),
             ReservationStation(name="LOAD2"),
             ReservationStation(name="STORE1"),
             ReservationStation(name="STORE2"),
         ]
         
-        # Reorder Buffer (8 entries)
-        self.rob = [ReorderBufferEntry(entry=i) for i in range(8)]
+        # Reorder Buffer (40 entries to accommodate 27 unrolled instructions)
+        self.rob = [ReorderBufferEntry(entry=i) for i in range(40)]
         self.rob_head = 0
         self.rob_tail = 0
         
@@ -232,9 +289,15 @@ class TomasuloEngine:
             
             # Map instruction types
             type_mapping = {
-                'ADDD': 'ADD', 'SUBD': 'SUB', 'MULTD': 'MULT', 'DIVD': 'DIV',
-                'LD': 'LOAD', 'ST': 'STORE', 'STORE': 'STORE',
-                'BNE': 'BRANCH', 'BEQ': 'BRANCH', 'BGT': 'BRANCH', 'BLT': 'BRANCH',
+                'ADDD': 'ADD', 'FADD.D': 'ADD', 'FADDD': 'ADD',
+                'SUBD': 'SUB', 'FSUB.D': 'SUB', 'FSUBD': 'SUB',
+                'MULTD': 'MULT', 'FMUL.D': 'MULT', 'FMULD': 'MULT',
+                'DIVD': 'DIV', 'FDIV.D': 'DIV', 'FDIVD': 'DIV',
+                'LD': 'LOAD', 'FLD': 'LOAD', 'FLD.D': 'LOAD',
+                'ST': 'STORE', 'SD': 'STORE', 'FSD': 'STORE', 'FSD.D': 'STORE',
+                'STORE': 'STORE',
+                'BNE': 'BRANCH', 'BEQ': 'BRANCH', 'BGT': 'BRANCH', 'BLT': 'BRANCH', 'BNEZ': 'BRANCH',
+                'ADDI': 'ADD', 'SLTU': 'ADD',  # Map integer instructions to ADD type for INT stations
             }
             
             inst_type = type_mapping.get(inst_type_raw, inst_type_raw)
@@ -291,18 +354,163 @@ class TomasuloEngine:
                     parsed["src2"] = parts[2]
                     parsed["label_target"] = parts[3]
                 elif len(parts) == 3:
+                    # Handle BNEZ: BNEZ reg, label (src1=reg, src2=None, label_target=label)
+                    if inst_type_raw == 'BNEZ':
+                        parsed["src1"] = parts[1]
+                        parsed["src2"] = None
+                        parsed["label_target"] = parts[2]
+                    else:
+                        parsed["src1"] = parts[1]
+                        parsed["src2"] = parts[2]
+                elif len(parts) == 2:
+                    # Handle BNEZ with exactly 2 parts: BNEZ reg label
                     parsed["src1"] = parts[1]
-                    parsed["src2"] = parts[2]
+                    parsed["src2"] = None
+                    parsed["label_target"] = parts[2] if len(parts) > 2 else None
 
             parsed_instructions.append(parsed)
             instruction_index += 1
 
         self.load_instructions(parsed_instructions)
 
-    def step_forward(self) -> TomasuloState:
-        """Advance one clock cycle"""
+    def pre_unroll_loops(self, iterations: int):
+        """Statically unroll loops for the specified number of iterations"""
+        if iterations <= 1:
+            return
         
-        # 1. Commit stage - commit completed instructions from ROB head
+        print(f"Pre-unrolling loops for {iterations} iterations")
+        
+        # Find all loops (branches that jump backward)
+        loops = []
+        for i, inst in enumerate(self.instruction_list):
+            if inst.type == InstructionType.BRANCH and inst.label_target:
+                if inst.label_target in self.labels:
+                    target_idx = self.labels[inst.label_target]
+                    # Check if this is a backward branch (loop)
+                    if target_idx <= i:
+                        loops.append({
+                            'start_idx': target_idx,
+                            'end_idx': i,
+                            'label': inst.label_target,
+                            'branch_inst': inst
+                        })
+        
+        if not loops:
+            print("No loops found to unroll - loading single iteration")
+            return  # Continue with single iteration, don't do anything
+        
+        print(f"Found {len(loops)} loop(s) to unroll")
+        
+        # Sort loops by start index (outermost first)
+        loops.sort(key=lambda x: x['start_idx'])
+        
+        # Create new instruction list with unrolled loops
+        new_instructions = []
+        new_labels = {}
+        
+        i = 0
+        while i < len(self.instruction_list):
+            # Check if this instruction is the start of a loop
+            loop_start = None
+            for loop in loops:
+                if i == loop['start_idx']:
+                    loop_start = loop
+                    break
+            
+            if loop_start:
+                # This is a loop start - unroll it
+                print(f"Unrolling loop '{loop_start['label']}' from index {loop_start['start_idx']} to {loop_start['end_idx']}")
+                
+                # Create unique label for this loop instance
+                base_label = loop_start['label']
+                
+                # Add the loop body for each iteration
+                for iter_num in range(iterations):
+                    # Add labels for this iteration
+                    iter_label = f"{base_label}_iter{iter_num}"
+                    
+                    # Process each instruction in the loop body
+                    for loop_idx in range(loop_start['start_idx'], loop_start['end_idx'] + 1):
+                        loop_inst = self.instruction_list[loop_idx]
+                        
+                        # Create a copy of the instruction
+                        new_inst = Instruction(
+                            type=loop_inst.type,
+                            dest=loop_inst.dest,
+                            src1=loop_inst.src1,
+                            src2=loop_inst.src2,
+                            address=loop_inst.address,
+                            label_target=loop_inst.label_target
+                        )
+                        
+                        # Update label targets for this iteration
+                        if new_inst.label_target:
+                            # If the branch targets the loop start, update to this iteration
+                            if new_inst.label_target == base_label:
+                                if iter_num < iterations - 1:  # Not the last iteration
+                                    new_inst.label_target = iter_label
+                                else:
+                                    # Last iteration - remove the branch or make it fall through
+                                    new_inst.label_target = None
+                        
+                        # Add instruction with iteration-specific label if this is the loop start
+                        if loop_idx == loop_start['start_idx']:
+                            # Add the instruction with the iteration label
+                            new_instructions.append(new_inst)
+                            new_labels[iter_label] = len(new_instructions) - 1
+                        else:
+                            new_instructions.append(new_inst)
+                
+                # Skip the original loop instructions
+                i = loop_start['end_idx'] + 1
+            else:
+                # Regular instruction - just copy it
+                inst = self.instruction_list[i]
+                new_inst = Instruction(
+                    type=inst.type,
+                    dest=inst.dest,
+                    src1=inst.src1,
+                    src2=inst.src2,
+                    address=inst.address,
+                    label_target=inst.label_target
+                )
+                
+                # Update any label targets that were affected by unrolling
+                if new_inst.label_target and new_inst.label_target in self.labels:
+                    original_target = self.labels[new_inst.label_target]
+                    # Check if this target was affected by loop unrolling
+                    for loop in loops:
+                        if original_target >= loop['start_idx'] and original_target <= loop['end_idx']:
+                            # This target was inside an unrolled loop - adjust it
+                            new_inst.label_target = f"{new_inst.label_target}_iter{iterations-1}"
+                            break
+                
+                new_instructions.append(new_inst)
+                i += 1
+        
+        # Update the engine state with the unrolled instructions
+        self.instruction_list = new_instructions
+        self.labels = new_labels
+        
+        # Rebuild instruction_to_label mapping
+        self.instruction_to_label = {}
+        for label, idx in new_labels.items():
+            self.instruction_to_label[idx] = label
+        
+        print(f"Unrolled program has {len(new_instructions)} instructions")
+        print(f"New labels: {list(new_labels.keys())}")
+        
+        # Save the unrolled state
+        self._save_state()
+
+    def step_forward(self) -> TomasuloState:
+        """Advance one clock cycle - Process stages in order: Commit -> Write Result -> Execute -> Issue"""
+        
+        # Initialize counters at the very beginning
+        write_count = 0
+        issued_this_cycle = 0
+        
+        # 1. COMMIT STAGE - Commit completed instructions from ROB head
         if self.rob[self.rob_head].busy and self.rob[self.rob_head].state == "Write Result":
             rob_entry = self.rob[self.rob_head]
             print(f'Cycle {self.current_cycle}: Committing ROB entry {self.rob_head}')
@@ -323,11 +531,132 @@ class TomasuloEngine:
             self.rob[self.rob_head].state = "Commit"
             self.rob_head = (self.rob_head + 1) % len(self.rob)
         
-        # 2. Execute & Write Result stage - execute operations in reservation stations
+        # 2. WRITE RESULT STAGE - Write results to CDB (respect CDB write limit)
+        ready_to_write = []
+        
+        # Find instructions ready to write (execution completed)
+        for rs in self.reservation_stations:
+            if rs.busy and rs.op and rs.time is not None and rs.time == 0:
+                ready_to_write.append(rs)
+        
+        # Process write results (respect CDB write limit)
+        for rs in ready_to_write:
+            if write_count >= self.cdb_write_limit:
+                print(f'Cycle {self.current_cycle}: CDB write limit reached, delaying write for {rs.name}')
+                continue  # Skip this write for now, will try next cycle
+                
+            result = 0.0
+            rob_idx = rs.dest
+            
+            # Compute result based on operation
+            if rs.op == "ADD": result = (rs.vj or 0) + (rs.vk or 0)
+            elif rs.op == "SUB": result = (rs.vj or 0) - (rs.vk or 0)
+            elif rs.op == "MULT": result = (rs.vj or 0) * (rs.vk or 0)
+            elif rs.op == "DIV": result = (rs.vj / rs.vk) if rs.vk != 0 else 0
+            elif rs.op == "LOAD": result = self.memory.get(rs.a, 0.0)
+            elif rs.op == "BRANCH":
+                # Branch execution signals completion
+                result = 0.0
+            
+            # Store Result for STORE instructions
+            if rs.op == "STORE":
+                 if rs.a is not None:
+                     self.memory[rs.a] = rs.vk if rs.vk is not None else 0.0
+                     print(f"Stored {rs.vk} at address {rs.a}")
+
+            # BROADCAST to CDB
+            trace_idx = self.rob_to_instruction.get(rob_idx)
+            if trace_idx is not None and trace_idx < len(self.trace):
+                self.trace[trace_idx].write_result_cycle = self.current_cycle
+            
+            if rob_idx is not None:
+                self.rob[rob_idx].value = result
+                self.rob[rob_idx].state = "Write Result"
+                self.execution_counter += 1
+                
+                # Update all waiting stations (CDB Broadcast)
+                for other_rs in self.reservation_stations:
+                    if other_rs.busy:
+                        if other_rs.qj == str(rob_idx):
+                            other_rs.qj = None
+                            other_rs.vj = result
+                        if other_rs.qk == str(rob_idx):
+                            other_rs.qk = None
+                            other_rs.vk = result
+                
+                # Update Registers waiting for this value
+                if self.rob[rob_idx].destination:
+                    for rf in self.register_file:
+                        if rf.name == self.rob[rob_idx].destination and rf.q == str(rob_idx):
+                            rf.value = result
+                            rf.q = None
+            
+            # Release Station - Immediate recovery for integer stations
+            rs.busy = False
+            rs.time = None
+            rs.op = None
+            rs.vj = None; rs.vk = None
+            rs.qj = None; rs.qk = None
+            rs.a = None; rs.dest = None
+            rs.cdb_available_cycle = None  # Reset CDB tracking
+            
+            # Integer Station Recovery: Integer stations are freed immediately
+            # This allows subsequent addi/sltu instructions to issue in following cycles
+            if rs.name.startswith("INT"):
+                print(f'Cycle {self.current_cycle}: Integer station {rs.name} immediately freed for next instruction')
+            
+            write_count += 1
+        
+        # 3. EXECUTE STAGE - Advance execution and check for new starts
+        # Track FU usage for pipelining check
+        fu_in_use = set()
+        
         for rs in self.reservation_stations:
             if rs.busy and rs.op:
                 # Check if operands are ready (Qj and Qk must be None)
                 operands_ready = (rs.qj is None and rs.qk is None)
+                
+                # Strict CDB Dependency: Check if waiting for CDB values that aren't available yet
+                # According to Exercise 3.15, dependent instructions must wait one cycle after source writes to CDB
+                # Example: If source writes at Cycle 3, dependent can start execution at Cycle 4
+                cdb_ready = True
+                if rs.qj is not None and rs.qj.isdigit():
+                    rob_idx_j = int(rs.qj)
+                    if rob_idx_j < len(self.rob):
+                        # Check if source ROB has written to CDB
+                        if self.rob[rob_idx_j].state != "Write Result":
+                            cdb_ready = False
+                        else:
+                            # Source has written to CDB, find when it wrote
+                            source_trace_idx = self.rob_to_instruction.get(rob_idx_j)
+                            if source_trace_idx is not None:
+                                source_trace = self.trace[source_trace_idx]
+                                if source_trace.write_result_cycle is not None:
+                                    # Dependent must wait until next cycle after source write
+                                    if self.current_cycle <= source_trace.write_result_cycle:
+                                        cdb_ready = False
+                                else:
+                                    # Source hasn't written yet
+                                    cdb_ready = False
+                
+                if rs.qk is not None and rs.qk.isdigit():
+                    rob_idx_k = int(rs.qk)
+                    if rob_idx_k < len(self.rob):
+                        # Check if source ROB has written to CDB
+                        if self.rob[rob_idx_k].state != "Write Result":
+                            cdb_ready = False
+                        else:
+                            # Source has written to CDB, find when it wrote
+                            source_trace_idx = self.rob_to_instruction.get(rob_idx_k)
+                            if source_trace_idx is not None:
+                                source_trace = self.trace[source_trace_idx]
+                                if source_trace.write_result_cycle is not None:
+                                    # Dependent must wait until next cycle after source write
+                                    if self.current_cycle <= source_trace.write_result_cycle:
+                                        cdb_ready = False
+                                else:
+                                    # Source hasn't written yet
+                                    cdb_ready = False
                 
                 # For BRANCH, both vj and vk must be ready
                 if rs.op == "BRANCH":
@@ -339,10 +668,30 @@ class TomasuloEngine:
                     # For ADD/SUB/MULT/DIV, need both vj and vk
                     operands_ready = operands_ready and rs.vj is not None and rs.vk is not None
                 
-                # Initialize time ONLY when operands become ready (start of execution)
-                if operands_ready and rs.time is None:
+                # Check FU pipelining constraint
+                fu_type = None
+                if rs.op in ["ADD", "SUB"]:
+                    fu_type = "ADD_SUB"
+                elif rs.op in ["MULT", "DIV"]:
+                    fu_type = "MULT_DIV"
+                elif rs.op == "LOAD":
+                    fu_type = "LOAD"
+                elif rs.op == "STORE":
+                    fu_type = "STORE"
+                elif rs.op == "BRANCH":
+                    fu_type = "BRANCH"
+                
+                # Check if FU is already in use (when pipelining is disabled)
+                fu_available = self.fu_pipelining or fu_type not in fu_in_use
+                
+                # Initialize time ONLY when operands are ready, CDB is available, and FU is available
+                if operands_ready and cdb_ready and rs.time is None and fu_available:
                     # Set execution cycles based on operation type using configurable latencies
                     rs.time = self.latencies.get(rs.op, 1)
+                    
+                    # Mark FU as in use for this cycle
+                    if not self.fu_pipelining:
+                        fu_in_use.add(fu_type)
                     
                     # Track execute_cycle when execution starts
                     rob_idx = rs.dest
@@ -356,73 +705,10 @@ class TomasuloEngine:
                 if rs.time is not None and rs.time > 0:
                     rs.time -= 1
                     print(f'Cycle {self.current_cycle}: RS {rs.name} executing {rs.op}, cycles remaining: {rs.time}')
-                
-                # If cycles reach 0 (after decrement or already 0), execute and broadcast immediately
-                if rs.time is not None and rs.time == 0:
-                    result = 0.0
-                    rob_idx = rs.dest
-                    
-                    # Compute result based on operation
-                    if rs.op == "ADD": result = (rs.vj or 0) + (rs.vk or 0)
-                    elif rs.op == "SUB": result = (rs.vj or 0) - (rs.vk or 0)
-                    elif rs.op == "MULT": result = (rs.vj or 0) * (rs.vk or 0)
-                    elif rs.op == "DIV": result = (rs.vj / rs.vk) if rs.vk != 0 else 0
-                    elif rs.op == "LOAD": result = self.memory.get(rs.a, 0.0)
-                    elif rs.op == "BRANCH":
-                        # Branch logic handles control flow during Execute/Writeback if handling misprediction
-                        # But for this simple simulator with dynamic Issue, control flow happens at Issue (Prediction).
-                        # Here we just check correctness or update history.
-                        # Since we simulate "perfect" or "immediate" flow in Issue for now (or static unroll style previously),
-                        # we technically don't need complex branch recovery for this specific request unless requested.
-                        # The user wants "process will put the instructions in issue Q".
-                        pass # Branch execution mainly signals completion here.
-                    
-                    # Store Result
-                    if rs.op == "STORE":
-                         # Store value (vk/src1) into memory address (dest/address + vj/base)
-                         # Note: In standard tomasulo, store is handled at commit, but for simplicity:
-                         if rs.a is not None:
-                             self.memory[rs.a] = rs.vk if rs.vk is not None else 0.0
-                             print(f"Stored {rs.vk} at address {rs.a}")
-
-                    # BROADCAST to CDB
-                    trace_idx = self.rob_to_instruction.get(rob_idx)
-                    if trace_idx is not None and trace_idx < len(self.trace):
-                        self.trace[trace_idx].write_result_cycle = self.current_cycle
-                    
-                    if rob_idx is not None:
-                        self.rob[rob_idx].value = result
-                        self.rob[rob_idx].state = "Write Result"
-                        self.execution_counter += 1
-                        
-                        # Update all waiting stations (CDB Broadcast)
-                        for other_rs in self.reservation_stations:
-                            if other_rs.busy:
-                                if other_rs.qj == str(rob_idx):
-                                    other_rs.qj = None
-                                    other_rs.vj = result
-                                if other_rs.qk == str(rob_idx):
-                                    other_rs.qk = None
-                                    other_rs.vk = result
-                        
-                        # Update Registers waiting for this value
-                        if self.rob[rob_idx].destination:
-                            for rf in self.register_file:
-                                if rf.name == self.rob[rob_idx].destination and rf.q == str(rob_idx):
-                                    rf.value = result
-                                    rf.q = None
-                    
-                    # Release Station
-                    rs.busy = False
-                    rs.time = None
-                    rs.op = None
-                    rs.vj = None; rs.vk = None
-                    rs.qj = None; rs.qk = None
-                    rs.a = None; rs.dest = None
         
-        # 3. Issue stage - issue new instruction if possible
-        # Check against instruction_list length
-        if self.instruction_counter < len(self.instruction_list):
+        # 4. ISSUE STAGE - Issue new instructions if possible (respect issue width)
+        while (issued_this_cycle < self.issue_width and 
+               self.instruction_counter < len(self.instruction_list)):
             inst = self.instruction_list[self.instruction_counter]
             print(f'Cycle {self.current_cycle}: Attempting to issue instruction {self.instruction_counter}: {inst.type.value}')
             
@@ -431,11 +717,13 @@ class TomasuloEngine:
             
             if rob_idx is None:
                 print(f'Cycle {self.current_cycle}: Cannot issue - ROB full')
+                break  # Stop issuing if ROB is full
             else:
                 # Find appropriate reservation station
                 rs_idx = self._find_reservation_station(inst.type)
                 if rs_idx is None:
                     print(f'Cycle {self.current_cycle}: Cannot issue - No free reservation station for {inst.type.value}')
+                    break  # Stop issuing if no RS available
                 else:
                     rs = self.reservation_stations[rs_idx]
                     
@@ -443,11 +731,6 @@ class TomasuloEngine:
                     trace_idx = len(self.trace)
                     
                     # Determine iteration
-                    # Simple heuristic: if we visited this PC before, increment iteration?
-                    # Or usage self.loop_unroll_count logic?
-                    # Let's use the loop_unroll_count for BRANCH mapping or just global count?
-                    # Better: self.instruction_iterations maps static PC -> current iteration
-                    # Initialize if missing
                     if self.instruction_counter not in self.instruction_iterations:
                         self.instruction_iterations[self.instruction_counter] = 1
                     
@@ -515,6 +798,7 @@ class TomasuloEngine:
                     
                     self.rob_tail = (self.rob_tail + 1) % len(self.rob)
                     self.total_issued_count += 1
+                    issued_this_cycle += 1  # Increment issued count
                     
                     # --- CONTROL FLOW UPDATE (PC) ---
                     # Default: Advance PC
@@ -529,46 +813,22 @@ class TomasuloEngine:
                              self.loop_unroll_count[loop_label] = 0
                              
                         # Check if we should branch (Loop logic)
-                        # The logic: if current iterations < target_iterations -> Take branch
-                        # We need to know which loop this is.
-                        # Assuming label_target points to start of loop.
-                        
                         current_loop_iter = self.loop_unroll_count[loop_label]
                         if current_loop_iter < (self.target_iterations - 1):
                             # Take Branch
                             if loop_label in self.labels:
                                 next_pc = self.labels[loop_label]
                                 self.loop_unroll_count[loop_label] += 1
-                                # Also update iteration count for instructions in the loop?
-                                # That happens when we visit them.
-                                # But we need to make sure when we jump back, we increment the 'iteration' counter for those instructions?
-                                # A simple global map `instruction_iterations` might fail if next_pc jumps back.
-                                # Correct way: When jumping back, we expect to see instructions again.
-                                # We can just increment iteration count for the target instruction logic?
-                                # Actually, `instruction_iterations` map should probably be updated here?
-                                # No, let's update `instruction_iterations` as we encounter them. 
-                                # But how do we know it's a new iteration for *that* instruction?
-                                # If we jump back to L1, the instruction at L1 is visited again.
-                                # trace doesn't store this state. 
-                                # We can infer iteration from loop_unroll_count + 1?
-                                pass
                             else:
                                 print(f"Warning: Label {loop_label} not found")
                         else:
-                            # Parse through loop end, reset specific loop counter?
-                            # Or just fall through.
+                            # Fall through
                             print(f"Loop {loop_label} finished {self.target_iterations} iterations. Falling through.")
-                            # Optional: Reset counter if we re-enter loop later from outside? 
-                            # For single pass simulator, fine to leave as is.
                         
                     self.instruction_counter = next_pc
                     
                     # Update iteration count for the NEXT instruction
                     if next_pc < len(self.instruction_list):
-                        # Capture current PC from trace entry or just calculate it?
-                        # We updated self.instruction_counter. The executed instruction was at 'inst.instruction_index' (trace_entry.instruction_index).
-                        # But we constructed 'new_trace' earlier using 'self.instruction_counter' (before update).
-                        # Let's use 'new_trace.instruction_index' as 'current_pc'.
                         current_pc = new_trace.instruction_index
                         
                         if next_pc <= current_pc: 
@@ -596,17 +856,28 @@ class TomasuloEngine:
     def _find_reservation_station(self, inst_type: InstructionType) -> Optional[int]:
         """Find a free reservation station for the instruction type"""
         target_prefixes = []
-        if inst_type in [InstructionType.ADD, InstructionType.SUB]:
-            target_prefixes = ["ADD"]
-        elif inst_type in [InstructionType.MULT, InstructionType.DIV]:
-            target_prefixes = ["MULT"]
-        elif inst_type == InstructionType.LOAD:
+        
+        # Map based on original instruction types before aliasing
+        # fld / fsd -> LOAD / STORE stations
+        if inst_type == InstructionType.LOAD:
             target_prefixes = ["LOAD"]
         elif inst_type == InstructionType.STORE:
             target_prefixes = ["STORE"]
+        
+        # fmul.d / fdiv.d -> FP_MULT stations  
+        elif inst_type in [InstructionType.MULT, InstructionType.DIV]:
+            target_prefixes = ["FP_MULT"]
+        
+        # fadd.d / fsub.d -> FP_ADD stations
+        elif inst_type in [InstructionType.ADD, InstructionType.SUB]:
+            # Check if this is an integer instruction (addi/sltu) by looking at the original instruction
+            # For now, we'll use a heuristic: if it maps to ADD but has integer-like operands, use INT
+            # This is a simplified approach - in a real implementation, we'd track the original instruction type
+            target_prefixes = ["FP_ADD", "INT"]  # Try FP_ADD first, then INT
+        
+        # addi / sltu / bnez -> INT stations
         elif inst_type == InstructionType.BRANCH:
-            # Branches often use ADD stations or dedicated units. Using ADD here.
-            target_prefixes = ["ADD"] 
+            target_prefixes = ["INT"]
 
         for idx, rs in enumerate(self.reservation_stations):
             if not rs.busy:
@@ -626,28 +897,37 @@ class TomasuloEngine:
 
     def _save_state(self):
         """Save current state to history"""
-        # Prepare instructions list for frontend with display info from TRACE
+        # Prepare instructions list for frontend - show ALL instructions in queue
         display_instructions = []
-        for idx, trace_entry in enumerate(self.trace):
-            inst = self.instruction_list[trace_entry.instruction_index]
+        
+        # Show all instructions in the instruction list (including unrolled ones)
+        for idx, inst in enumerate(self.instruction_list):
             inst_dict = inst.dict()
             
-            # Label should only show if it matches the static one? 
-            # Or should we show labels for repeated loops? 
-            # Static labels are mapped to instruction_indices.
-            # If trace_entry.instruction_index has a label, show it?
-            # Yes, show labels to understand where "L1" is in the trace.
-            inst_dict["label"] = self.instruction_to_label.get(trace_entry.instruction_index)
-            # Only show label on the first iteration? Or all? User preference.
-            # For clarity, let's show it.
+            # Get label if this instruction has one
+            inst_dict["label"] = self.instruction_to_label.get(idx)
             
-            inst_dict["iteration"] = trace_entry.iteration
+            # Find corresponding trace entry if this instruction has been issued
+            trace_entry = None
+            for te in self.trace:
+                if te.instruction_index == idx:
+                    trace_entry = te
+                    break
             
-            # Format timing values as strings without checkmarks
-            inst_dict["issue_cycle"] = str(trace_entry.issue_cycle) if trace_entry.issue_cycle is not None else "-"
-            inst_dict["execute_cycle"] = str(trace_entry.execute_cycle) if trace_entry.execute_cycle is not None else "-"
-            inst_dict["write_result_cycle"] = str(trace_entry.write_result_cycle) if trace_entry.write_result_cycle is not None else "-"
-            inst_dict["commit_cycle"] = str(trace_entry.commit_cycle) if trace_entry.commit_cycle is not None else "-"
+            if trace_entry:
+                # Instruction has been issued - show timing info
+                inst_dict["iteration"] = trace_entry.iteration
+                inst_dict["issue_cycle"] = str(trace_entry.issue_cycle) if trace_entry.issue_cycle is not None else "-"
+                inst_dict["execute_cycle"] = str(trace_entry.execute_cycle) if trace_entry.execute_cycle is not None else "-"
+                inst_dict["write_result_cycle"] = str(trace_entry.write_result_cycle) if trace_entry.write_result_cycle is not None else "-"
+                inst_dict["commit_cycle"] = str(trace_entry.commit_cycle) if trace_entry.commit_cycle is not None else "-"
+            else:
+                # Instruction not yet issued - show placeholder values
+                inst_dict["iteration"] = 0
+                inst_dict["issue_cycle"] = "-"
+                inst_dict["execute_cycle"] = "-"
+                inst_dict["write_result_cycle"] = "-"
+                inst_dict["commit_cycle"] = "-"
             
             display_instructions.append(inst_dict)
 
@@ -777,17 +1057,51 @@ async def load_program(request: Request):
             data = await request.json()
             program_text = data.get("program") or data.get("instructions") or ""
             iterations = data.get("iterations", 1)
-            print(f"Received JSON request: iterations={iterations}")
+            latencies = data.get("latencies", {})
+            hardware_config = data.get("hardware_config", {})
+            rs_config = data.get("rs_config", {})
+            print(f"Received JSON request: iterations={iterations}, latencies={latencies}")
+            print(f"Hardware config: {hardware_config}, RS config: {rs_config}")
         else:
             body = await request.body()
             program_text = body.decode('utf-8')
             iterations = 1
+            latencies = {}
+            hardware_config = {}
+            rs_config = {}
             print(f"Received raw text request")
 
         print(f"Program text: {repr(program_text)}")
         print(f"Iterations: {iterations}")
 
         engine.reset()
+        
+        # Configure hardware settings
+        if hardware_config:
+            engine.configure_hardware(
+                issue_width=hardware_config.get("issue_width", 1),
+                cdb_write_limit=hardware_config.get("cdb_write_limit", 1),
+                fu_pipelining=hardware_config.get("fu_pipelining", True)
+            )
+        
+        # Configure reservation stations
+        if rs_config:
+            engine.configure_reservation_stations(
+                int_count=rs_config.get("int", 3),
+                load_count=rs_config.get("load", 2),
+                store_count=rs_config.get("store", 2),
+                fp_add_count=rs_config.get("fp_add", 2),
+                fp_mult_count=rs_config.get("fp_mult", 2)
+            )
+        
+        # Set custom latencies if provided
+        if latencies:
+            engine.set_latencies(
+                load_store=latencies.get("load_store", 2),
+                add_sub=latencies.get("add_sub", 2),
+                mult=latencies.get("mult", 10),
+                div=latencies.get("div", 40)
+            )
         
         # Split into lines and filter empty ones
         lines = [line.strip() for line in program_text.split('\n') if line.strip()]
@@ -798,12 +1112,12 @@ async def load_program(request: Request):
 
         engine.set_instructions(lines)
         
-        engine.set_instructions(lines)
-        
-        # Set target iterations for dynamic execution
-        engine.target_iterations = iterations
-        print(f"Set target iterations to {iterations}. Dynamic unrolling enabled.")
-
+        # Pre-unroll loops if iterations > 1
+        if iterations > 1:
+            print(f"Calling pre_unroll_loops with {iterations} iterations")
+            engine.pre_unroll_loops(iterations)
+        else:
+            print("Skipping pre-unroll (iterations <= 1)")
         
         return engine.get_current_state().dict()
         
