@@ -66,6 +66,17 @@ class ReorderBufferEntry(BaseModel):
     exception: Optional[str] = None
 
 
+class TraceEntry(BaseModel):
+    trace_index: int
+    instruction_index: int
+    iteration: int
+    issue_cycle: Optional[int] = None
+    execute_cycle: Optional[int] = None
+    write_result_cycle: Optional[int] = None
+    commit_cycle: Optional[int] = None
+
+
+
 class RegisterFileEntry(BaseModel):
     name: str
     value: float
@@ -96,6 +107,7 @@ class TomasuloEngine:
         self.instruction_list: List[Instruction] = []
         self.state_history: List[TomasuloState] = []
         self.instruction_counter = 0
+        self.total_issued_count = 0
         self.execution_counter = 0
         self.labels: Dict[str, int] = {}  # Map label names to instruction indices
         self.instruction_to_label: Dict[int, str] = {}  # Map instruction index to label name
@@ -104,12 +116,8 @@ class TomasuloEngine:
         self.loop_unroll_count: Dict[str, int] = {}  # Track unroll count per loop (loop_id -> count)
         self.target_iterations = 1  # Default to 1 iteration if not specified
 
-        
-        # TIMING TRACKERS
-        self.issue_cycle: Dict[int, int] = {}       # Map instruction index to issue cycle
-        self.execute_cycle: Dict[int, int] = {}     # Map instruction index to execute cycle
-        self.write_result_cycle: Dict[int, int] = {} # Map instruction index to write result cycle
-        self.commit_cycle: Dict[int, int] = {}      # Map instruction index to commit cycle
+        # TRACE STORAGE
+        self.trace: List[TraceEntry] = []
         
         # Reservation Stations
         self.reservation_stations = [
@@ -197,6 +205,7 @@ class TomasuloEngine:
         # Second pass: parse instructions
         parsed_instructions = []
         instruction_index = 0
+        pending_label = None
         
         for line in instruction_lines:
             # Remove comments (everything after # or //)
@@ -206,13 +215,12 @@ class TomasuloEngine:
             
             # Check if line is a label (ends with colon, e.g., "L1:")
             label_match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*:', line)
-            current_label = None
             if label_match:
-                current_label = label_match.group(1)
+                pending_label = label_match.group(1)
                 # Remove label from line to parse the rest
                 line = re.sub(r'^[A-Za-z_][A-Za-z0-9_]*\s*:\s*', '', line).strip()
                 if not line:
-                    continue  # Label on its own line, skip
+                    continue  # Label on its own line, skip to next line but keep pending_label
             
             # Split by commas and whitespace, then filter empty strings
             parts = [p.strip() for p in re.split(r'[,\s]+', line) if p.strip()]
@@ -241,8 +249,9 @@ class TomasuloEngine:
                 "src2": None,
                 "address": None,
                 "label_target": None,
-                "label": current_label
+                "label": pending_label
             }
+            pending_label = None
             
             # Parse based on instruction type
             if inst_type in ['ADD', 'SUB', 'MULT', 'DIV']:
@@ -294,16 +303,14 @@ class TomasuloEngine:
         """Advance one clock cycle"""
         
         # 1. Commit stage - commit completed instructions from ROB head
-        # CORRECTED: Now tracks commit cycle and saves it
         if self.rob[self.rob_head].busy and self.rob[self.rob_head].state == "Write Result":
             rob_entry = self.rob[self.rob_head]
             print(f'Cycle {self.current_cycle}: Committing ROB entry {self.rob_head}')
             
-            # --- START FIX: RECORD COMMIT CYCLE ---
-            inst_idx = self.rob_to_instruction.get(self.rob_head)
-            if inst_idx is not None:
-                self.commit_cycle[inst_idx] = self.current_cycle
-            # --- END FIX ---
+            # Use trace_idx from rob_to_instruction
+            trace_idx = self.rob_to_instruction.get(self.rob_head)
+            if trace_idx is not None and trace_idx < len(self.trace):
+                self.trace[trace_idx].commit_cycle = self.current_cycle
 
             if rob_entry.destination:
                 # Update register file if this ROB is still the latest producer
@@ -340,10 +347,10 @@ class TomasuloEngine:
                     # Track execute_cycle when execution starts
                     rob_idx = rs.dest
                     if rob_idx is not None:
-                        inst_idx = self.rob_to_instruction.get(rob_idx)
-                        if inst_idx is not None:
-                            self.execute_cycle[inst_idx] = self.current_cycle
-                            print(f'Cycle {self.current_cycle}: Instruction {inst_idx} started executing in RS {rs.name} (operands ready, cycles={rs.time})')
+                        trace_idx = self.rob_to_instruction.get(rob_idx)
+                        if trace_idx is not None and trace_idx < len(self.trace):
+                            self.trace[trace_idx].execute_cycle = self.current_cycle
+                            print(f'Cycle {self.current_cycle}: Trace {trace_idx} started executing in RS {rs.name} (operands ready, cycles={rs.time})')
                 
                 # Decrement cycles remaining if execution has started
                 if rs.time is not None and rs.time > 0:
@@ -362,148 +369,13 @@ class TomasuloEngine:
                     elif rs.op == "DIV": result = (rs.vj / rs.vk) if rs.vk != 0 else 0
                     elif rs.op == "LOAD": result = self.memory.get(rs.a, 0.0)
                     elif rs.op == "BRANCH":
-                        # BRANCH logic with dynamic loop unrolling
-                        inst_idx = self.rob_to_instruction.get(rob_idx)
-                        should_take_branch = False
-                        
-                        if inst_idx is not None:
-                            inst = self.instruction_list[inst_idx]
-                            
-                            # Check if backward jump (Loop candidate)
-                            is_backward_jump = False
-                            target_line = -1
-                            if inst.label_target in self.labels:
-                                target_line = self.labels[inst.label_target]
-                                if target_line < inst_idx:
-                                    is_backward_jump = True
-                            
-                            if is_backward_jump and self.target_iterations > 1:
-                                # Dynamic Unrolling Logic (Overrides register values)
-                                loop_name = inst.label_target
-                                current_iter_count = self.loop_unroll_count.get(loop_name, 0)
-                                
-                                if current_iter_count < (self.target_iterations - 1):
-                                    # Take Branch (Unroll)
-                                    should_take_branch = True
-                                    
-                                    # Logic to Unroll
-                                    self.loop_unroll_count[loop_name] = current_iter_count + 1
-                                    new_iteration_num = self.loop_unroll_count[loop_name] + 1
-                                    
-                                    # ... (Same unroll logic as before) ...
-                                    original_loop_end = -1
-                                    for i in range(target_line, len(self.instruction_list)):
-                                            scan_inst = self.instruction_list[i]
-                                            if scan_inst.type == InstructionType.BRANCH and scan_inst.label_target == inst.label_target:
-                                                original_loop_end = i
-                                                break
-                                    
-                                    if original_loop_end != -1:
-                                        loop_instructions = []
-                                        for i in range(target_line, original_loop_end + 1):
-                                            loop_inst = self.instruction_list[i]
-                                            new_inst = Instruction(
-                                                type=loop_inst.type,
-                                                dest=loop_inst.dest,
-                                                src1=loop_inst.src1,
-                                                src2=loop_inst.src2,
-                                                address=loop_inst.address,
-                                                label_target=loop_inst.label_target
-                                            )
-                                            loop_instructions.append(new_inst)
-                                        
-                                        start_new_idx = len(self.instruction_list)
-                                        self.instruction_list.extend(loop_instructions)
-                                        
-                                        for i, _ in enumerate(loop_instructions):
-                                            new_abs_idx = start_new_idx + i
-                                            self.instruction_iterations[new_abs_idx] = new_iteration_num
-                                        
-                                        print(f'Cycle {self.current_cycle}: Loop unrolled {len(loop_instructions)} insts for iter {new_iteration_num}')
-                                        print(f'Cycle {self.current_cycle}: Loop Continued. Jumping to trace index {start_new_idx}')
-                                        self.instruction_counter = start_new_idx
-                                    else:
-                                        print("Error: Could not find original loop end for unrolling template")
-                                        self.instruction_counter = target_line
-                                
-                                else:
-                                    # Do Not Take Branch (Loop End)
-                                    should_take_branch = False
-                                    print(f'Cycle {self.current_cycle}: Loop Finished (reached {self.target_iterations} iterations).')
-                                    
-                                    original_loop_end = -1
-                                    for i in range(target_line, len(self.instruction_list)):
-                                            scan_inst = self.instruction_list[i]
-                                            if scan_inst.type == InstructionType.BRANCH and scan_inst.label_target == inst.label_target:
-                                                original_loop_end = i
-                                                break
-                                    
-                                    if original_loop_end != -1:
-                                            fallthrough_idx = original_loop_end + 1
-                                            
-                                            # Check if fallthrough would land us in the unrolled section
-                                            # This happens if there are NO instructions after the loop in the original program
-                                            # The unrolled instructions are appended to the end.
-                                            # The 'original' end is effectively self.original_instruction_count (not tracked)
-                                            # BUT, we can check if fallthrough_idx matches the start of any Loop Unroll block.
-                                            # OR simply: if fallthrough_idx points to an instruction that we dynamically added.
-                                            # We need to distinguish original vs dynamic.
-                                            
-                                            # Robust fix: 
-                                            # The dynamically added instructions are always at the END of the list.
-                                            # If fallthrough_idx >= len(self.instruction_list) BEFORE we added this current unroll block...
-                                            # Wait, we haven't added *this* iter's unroll block yet? 
-                                            # In this 'if' block (loop finish), we do NOT add new instructions.
-                                            # So `self.instruction_list` contains: [Original Program] + [Iter 2] + [Iter 3] ...
-                                            # `fallthrough_idx` is calculated based on `original_loop_end`. 
-                                            # `original_loop_end` is found by scanning from `target_line` (start of loop).
-                                            
-                                            # The issue: If the original program is just the loop, `original_loop_end` is the last instruction of the original program.
-                                            # `fallthrough_idx` = `original_loop_end` + 1.
-                                            # If we have already unrolled once, `self.instruction_list` has [Original] + [Unroll 1].
-                                            # `fallthrough_idx` points to the start of [Unroll 1].
-                                            # So we jump to [Unroll 1] and execute it again. Infinite Loop.
-                                            
-                                            # Solution: Executing the Fallthrough logic implies we want to run the code *after* the loop in the *logical* program flow.
-                                            # In the unrolling simulation, the instructions *after* the loop in the original source are the only valid destinations.
-                                            # We should jump to `original_loop_end + 1` ONLY IF that index represents an instruction from the ORIGINAL program.
-                                            # How do we know how many instructions were in the original program?
-                                            # We didn't store it. We should store it in `set_instructions`.
-                                            
-                                            # Alternative: The "original loop scan" loop `for i in range(target_line, len(self.instruction_list))` 
-                                            # might be scanning into unrolled territory if we are not careful?
-                                            # No, because unrolled instructions are appended.
-                                            # But if target_line is 0, and we appended stuff, the scan goes to end.
-                                            # We need to find the loop end *of the template*.
-                                            
-                                            # Let's fix 'original_loop_end' finding logic first to be safe (limit to avoiding unrolled).
-                                            # But simpler fix for now:
-                                            # If we jump to `fallthrough_idx`, verify it is NOT a dynamically generated instruction.
-                                            # We can check `self.instruction_iterations`.
-                                            # Original instructions have `Iter ?` (or uninitialized logic?).
-                                            
-                                            is_dynamic = fallthrough_idx in self.instruction_iterations
-                                            if is_dynamic:
-                                                 print(f"Cycle {self.current_cycle}: Fallthrough index {fallthrough_idx} is dynamic (Loop Boundary). Terminating loop execution locally.")
-                                                 # We have run out of original instructions.
-                                                 self.instruction_counter = len(self.instruction_list)
-                                            else:
-                                                 print(f"Jumping back to main program at index {fallthrough_idx}")
-                                                 self.instruction_counter = fallthrough_idx
-                                    else:
-                                            print("Error: Could not determine fallthrough target")
-                            else:
-                                # Standard Logic (Forward jump or dynamic not enabled)
-                                if rs.vj != rs.vk:
-                                    should_take_branch = True
-                                    print(f'Cycle {self.current_cycle}: Branch Taken (Standard). Jumping to {inst.label_target}')
-                                    if inst.label_target in self.labels:
-                                        self.instruction_counter = self.labels[inst.label_target]
-                        
-                        else:
-                            # Fallback if ROB mapping fails (shouldn't happen)
-                             if rs.vj != rs.vk:
-                                 pass # Can't jump without instruction info
+                        # Branch logic handles control flow during Execute/Writeback if handling misprediction
+                        # But for this simple simulator with dynamic Issue, control flow happens at Issue (Prediction).
+                        # Here we just check correctness or update history.
+                        # Since we simulate "perfect" or "immediate" flow in Issue for now (or static unroll style previously),
+                        # we technically don't need complex branch recovery for this specific request unless requested.
+                        # The user wants "process will put the instructions in issue Q".
+                        pass # Branch execution mainly signals completion here.
                     
                     # Store Result
                     if rs.op == "STORE":
@@ -514,9 +386,9 @@ class TomasuloEngine:
                              print(f"Stored {rs.vk} at address {rs.a}")
 
                     # BROADCAST to CDB
-                    inst_idx = self.rob_to_instruction.get(rob_idx)
-                    if inst_idx is not None:
-                        self.write_result_cycle[inst_idx] = self.current_cycle
+                    trace_idx = self.rob_to_instruction.get(rob_idx)
+                    if trace_idx is not None and trace_idx < len(self.trace):
+                        self.trace[trace_idx].write_result_cycle = self.current_cycle
                     
                     if rob_idx is not None:
                         self.rob[rob_idx].value = result
@@ -549,6 +421,7 @@ class TomasuloEngine:
                     rs.a = None; rs.dest = None
         
         # 3. Issue stage - issue new instruction if possible
+        # Check against instruction_list length
         if self.instruction_counter < len(self.instruction_list):
             inst = self.instruction_list[self.instruction_counter]
             print(f'Cycle {self.current_cycle}: Attempting to issue instruction {self.instruction_counter}: {inst.type.value}')
@@ -566,7 +439,29 @@ class TomasuloEngine:
                 else:
                     rs = self.reservation_stations[rs_idx]
                     
-                    # Issue instruction
+                    # Create Trace Entry
+                    trace_idx = len(self.trace)
+                    
+                    # Determine iteration
+                    # Simple heuristic: if we visited this PC before, increment iteration?
+                    # Or usage self.loop_unroll_count logic?
+                    # Let's use the loop_unroll_count for BRANCH mapping or just global count?
+                    # Better: self.instruction_iterations maps static PC -> current iteration
+                    # Initialize if missing
+                    if self.instruction_counter not in self.instruction_iterations:
+                        self.instruction_iterations[self.instruction_counter] = 1
+                    
+                    current_iter = self.instruction_iterations[self.instruction_counter]
+                    
+                    new_trace = TraceEntry(
+                        trace_index=trace_idx,
+                        instruction_index=self.instruction_counter,
+                        iteration=current_iter,
+                        issue_cycle=self.current_cycle
+                    )
+                    self.trace.append(new_trace)
+                    
+                    # Issue instruction (Use inst data)
                     rs.busy = True
                     rs.op = inst.type.value
                     rs.dest = rob_idx
@@ -575,8 +470,7 @@ class TomasuloEngine:
                     if inst.src1:
                         val1, q1 = self._get_register_value(inst.src1)
                         if inst.type == InstructionType.STORE:
-                            # For STORE, src1 is the value to store (goes to vk/qk usually, or depends on arch)
-                            # Here we map src1 -> vk/qk (value to store)
+                            # For STORE, src1 is the value to store
                             rs.vk = val1
                             rs.qk = q1
                         else:
@@ -592,10 +486,8 @@ class TomasuloEngine:
                         rs.a = inst.address if inst.address is not None else 0
                     elif inst.type == InstructionType.STORE:
                         rs.a = inst.address if inst.address is not None else 0
-                        # For STORE, dest is base register. Get its value for address calculation if needed
                         if inst.dest:
                              val_base, q_base = self._get_register_value(inst.dest)
-                             # In a real system, we might wait for base reg. Here simplifying:
                              rs.vj = val_base
                              rs.qj = q_base
                     
@@ -606,24 +498,87 @@ class TomasuloEngine:
                         self.rob[rob_idx].instruction = f"{inst.type.value} {inst.src1}, {inst.src2}, {inst.label_target or ''}"
                         self.rob[rob_idx].destination = None
                     else:
-                        target = inst.dest if inst.type != InstructionType.STORE else inst.src1 # Display purpose
+                        target = inst.dest if inst.type != InstructionType.STORE else inst.src1
                         self.rob[rob_idx].instruction = f"{inst.type.value} {target}"
                         self.rob[rob_idx].destination = inst.dest if inst.type != InstructionType.STORE else None
                     
                     self.rob[rob_idx].state = "Issue"
                     
-                    # Map ROB to instruction index
-                    self.rob_to_instruction[rob_idx] = self.instruction_counter
-                    self.issue_cycle[self.instruction_counter] = self.current_cycle
+                    # Map ROB -> Trace Index
+                    self.rob_to_instruction[rob_idx] = trace_idx
                     
-                    # Update register file (Renaming) - Store and Branch don't write to registers
+                    # Update register file (Renaming)
                     if inst.type != InstructionType.BRANCH and inst.type != InstructionType.STORE:
                          for rf in self.register_file:
                             if rf.name == inst.dest:
                                 rf.q = str(rob_idx)
                     
                     self.rob_tail = (self.rob_tail + 1) % len(self.rob)
-                    self.instruction_counter += 1
+                    self.total_issued_count += 1
+                    
+                    # --- CONTROL FLOW UPDATE (PC) ---
+                    # Default: Advance PC
+                    next_pc = self.instruction_counter + 1
+                    
+                    if inst.type == InstructionType.BRANCH and inst.label_target:
+                        # Dynamic Loop Handling
+                        loop_label = inst.label_target
+                        
+                        # Initialize loop counter for this label if needed
+                        if loop_label not in self.loop_unroll_count:
+                             self.loop_unroll_count[loop_label] = 0
+                             
+                        # Check if we should branch (Loop logic)
+                        # The logic: if current iterations < target_iterations -> Take branch
+                        # We need to know which loop this is.
+                        # Assuming label_target points to start of loop.
+                        
+                        current_loop_iter = self.loop_unroll_count[loop_label]
+                        if current_loop_iter < (self.target_iterations - 1):
+                            # Take Branch
+                            if loop_label in self.labels:
+                                next_pc = self.labels[loop_label]
+                                self.loop_unroll_count[loop_label] += 1
+                                # Also update iteration count for instructions in the loop?
+                                # That happens when we visit them.
+                                # But we need to make sure when we jump back, we increment the 'iteration' counter for those instructions?
+                                # A simple global map `instruction_iterations` might fail if next_pc jumps back.
+                                # Correct way: When jumping back, we expect to see instructions again.
+                                # We can just increment iteration count for the target instruction logic?
+                                # Actually, `instruction_iterations` map should probably be updated here?
+                                # No, let's update `instruction_iterations` as we encounter them. 
+                                # But how do we know it's a new iteration for *that* instruction?
+                                # If we jump back to L1, the instruction at L1 is visited again.
+                                # trace doesn't store this state. 
+                                # We can infer iteration from loop_unroll_count + 1?
+                                pass
+                            else:
+                                print(f"Warning: Label {loop_label} not found")
+                        else:
+                            # Parse through loop end, reset specific loop counter?
+                            # Or just fall through.
+                            print(f"Loop {loop_label} finished {self.target_iterations} iterations. Falling through.")
+                            # Optional: Reset counter if we re-enter loop later from outside? 
+                            # For single pass simulator, fine to leave as is.
+                        
+                    self.instruction_counter = next_pc
+                    
+                    # Update iteration count for the NEXT instruction
+                    if next_pc < len(self.instruction_list):
+                        # Capture current PC from trace entry or just calculate it?
+                        # We updated self.instruction_counter. The executed instruction was at 'inst.instruction_index' (trace_entry.instruction_index).
+                        # But we constructed 'new_trace' earlier using 'self.instruction_counter' (before update).
+                        # Let's use 'new_trace.instruction_index' as 'current_pc'.
+                        current_pc = new_trace.instruction_index
+                        
+                        if next_pc <= current_pc: 
+                             # Backward jump (or stay same) - New iteration for target
+                             current_val = self.instruction_iterations.get(next_pc, 0)
+                             self.instruction_iterations[next_pc] = current_val + 1
+                        else:
+                             # Forward flow - Propagate iteration count
+                             self.instruction_iterations[next_pc] = current_iter
+
         
         self.current_cycle += 1
         self._save_state()
@@ -660,102 +615,6 @@ class TomasuloEngine:
                     return idx
         return None
 
-    def pre_unroll_loops(self, iterations: int):
-        """Static unrolling: duplicate loop instructions N times"""
-        if iterations <= 1:
-            return
-        
-        print(f"Starting static unroll with {iterations} iterations")
-        print(f"Current instruction count: {len(self.instruction_list)}")
-        
-        # Find the first loop (first label to first backward branch)
-        loop_start = None
-        loop_end = None
-        loop_label = None
-        
-        # Find first label
-        for idx, inst in enumerate(self.instruction_list):
-            if idx in self.instruction_to_label:
-                loop_start = idx
-                loop_label = self.instruction_to_label[idx]
-                print(f"Found loop start at index {idx}, label: {loop_label}")
-                break
-        
-        # Find first backward branch after the label
-        if loop_start is not None:
-            for idx in range(loop_start, len(self.instruction_list)):
-                inst = self.instruction_list[idx]
-                if (inst.type == InstructionType.BRANCH and 
-                    inst.label_target and 
-                    inst.label_target in self.labels and 
-                    self.labels[inst.label_target] < idx):
-                    loop_end = idx
-                    print(f"Found loop end at index {idx}, target: {inst.label_target}")
-                    break
-        
-        if loop_start is None or loop_end is None:
-            print("No valid loop found for unrolling")
-            return
-        
-        # Extract loop body (from loop_start to loop_end, exclusive of branch)
-        loop_body = self.instruction_list[loop_start:loop_end]
-        print(f"Loop body has {len(loop_body)} instructions")
-        
-        # Create unrolled instructions
-        unrolled_instructions = []
-        for iteration in range(1, iterations + 1):
-            for i, loop_inst in enumerate(loop_body):
-                new_inst = Instruction(
-                    type=loop_inst.type,
-                    dest=loop_inst.dest,
-                    src1=loop_inst.src1,
-                    src2=loop_inst.src2,
-                    address=loop_inst.address,
-                    label_target=loop_inst.label_target
-                )
-                unrolled_instructions.append(new_inst)
-        
-        # Replace original loop with unrolled instructions
-        # Remove original loop instructions
-        del self.instruction_list[loop_start:loop_end + 1]
-        
-        # Insert unrolled instructions at the same position and track indices
-        for i, new_inst in enumerate(unrolled_instructions):
-            insert_idx = loop_start + i
-            self.instruction_list.insert(insert_idx, new_inst)
-            # Calculate iteration number for this instruction
-            iteration_num = (i // len(loop_body)) + 1
-            self.instruction_iterations[insert_idx] = iteration_num
-        
-        # Update all mappings
-        self._update_mappings_after_unroll(loop_start, loop_end, len(unrolled_instructions), len(loop_body))
-        
-        print(f"Unrolled loop: {len(loop_body)} instructions × {iterations} iterations = {len(unrolled_instructions)} total")
-        print(f"Final instruction count: {len(self.instruction_list)}")
-    
-    def _update_mappings_after_unroll(self, old_start, old_end, new_count, old_loop_count):
-        """Update label and instruction mappings after unrolling"""
-        shift_amount = new_count - (old_end - old_start + 1)
-        
-        # Update labels mapping
-        updated_labels = {}
-        for label, line_num in self.labels.items():
-            if line_num > old_end:
-                updated_labels[label] = line_num + shift_amount
-            else:
-                updated_labels[label] = line_num
-        self.labels = updated_labels
-        
-        # Update instruction_to_label mapping
-        updated_instruction_to_label = {}
-        for inst_idx, label in self.instruction_to_label.items():
-            if inst_idx > old_end:
-                updated_instruction_to_label[inst_idx + shift_amount] = label
-            elif inst_idx < old_start:
-                updated_instruction_to_label[inst_idx] = label
-            # Instructions within the unrolled loop get removed from mapping
-        self.instruction_to_label = updated_instruction_to_label
-
     def _get_register_value(self, reg_name: str) -> Tuple[float, Optional[str]]:
         """Get value or ROB dependency (Q) for a register"""
         for rf in self.register_file:
@@ -767,18 +626,28 @@ class TomasuloEngine:
 
     def _save_state(self):
         """Save current state to history"""
-        # Prepare instructions list for frontend with display info
+        # Prepare instructions list for frontend with display info from TRACE
         display_instructions = []
-        for idx, inst in enumerate(self.instruction_list):
+        for idx, trace_entry in enumerate(self.trace):
+            inst = self.instruction_list[trace_entry.instruction_index]
             inst_dict = inst.dict()
-            inst_dict["label"] = self.instruction_to_label.get(idx)
-            inst_dict["iteration"] = self.instruction_iterations.get(idx, 1)  # Default to iteration 1
+            
+            # Label should only show if it matches the static one? 
+            # Or should we show labels for repeated loops? 
+            # Static labels are mapped to instruction_indices.
+            # If trace_entry.instruction_index has a label, show it?
+            # Yes, show labels to understand where "L1" is in the trace.
+            inst_dict["label"] = self.instruction_to_label.get(trace_entry.instruction_index)
+            # Only show label on the first iteration? Or all? User preference.
+            # For clarity, let's show it.
+            
+            inst_dict["iteration"] = trace_entry.iteration
             
             # Format timing values as strings without checkmarks
-            inst_dict["issue_cycle"] = str(self.issue_cycle.get(idx)) if self.issue_cycle.get(idx) is not None else "-"
-            inst_dict["execute_cycle"] = str(self.execute_cycle.get(idx)) if self.execute_cycle.get(idx) is not None else "-"
-            inst_dict["write_result_cycle"] = str(self.write_result_cycle.get(idx)) if self.write_result_cycle.get(idx) is not None else "-"
-            inst_dict["commit_cycle"] = str(self.commit_cycle.get(idx)) if self.commit_cycle.get(idx) is not None else "-"
+            inst_dict["issue_cycle"] = str(trace_entry.issue_cycle) if trace_entry.issue_cycle is not None else "-"
+            inst_dict["execute_cycle"] = str(trace_entry.execute_cycle) if trace_entry.execute_cycle is not None else "-"
+            inst_dict["write_result_cycle"] = str(trace_entry.write_result_cycle) if trace_entry.write_result_cycle is not None else "-"
+            inst_dict["commit_cycle"] = str(trace_entry.commit_cycle) if trace_entry.commit_cycle is not None else "-"
             
             display_instructions.append(inst_dict)
 
@@ -790,8 +659,9 @@ class TomasuloEngine:
             register_file=[copy.deepcopy(rf) for rf in self.register_file],
             memory=copy.deepcopy(self.memory),
             stats={
-                "instructions_issued": self.instruction_counter,
+                "instructions_issued": self.total_issued_count,
                 "instructions_executed": self.execution_counter,
+                "pc": self.instruction_counter,
                 "rob_head": self.rob_head,
                 "rob_tail": self.rob_tail
             }
@@ -824,7 +694,10 @@ class TomasuloEngine:
         self.register_file = [copy.deepcopy(rf) for rf in state.register_file]
         self.memory = copy.deepcopy(state.memory)
         
-        self.instruction_counter = state.stats["instructions_issued"]
+        self.memory = copy.deepcopy(state.memory)
+        
+        self.total_issued_count = state.stats["instructions_issued"]
+        self.instruction_counter = state.stats.get("pc", 0) # Restore PC
         self.execution_counter = state.stats["instructions_executed"]
         self.rob_head = state.stats["rob_head"]
         self.rob_tail = state.stats["rob_tail"]
@@ -930,12 +803,6 @@ async def load_program(request: Request):
         # Set target iterations for dynamic execution
         engine.target_iterations = iterations
         print(f"Set target iterations to {iterations}. Dynamic unrolling enabled.")
-        
-        # if iterations > 1:
-        #    print(f"Calling pre_unroll_loops with {iterations} iterations")
-        #    engine.pre_unroll_loops(iterations)
-        # else:
-        #    print("Skipping pre-unroll (iterations <= 1)")
 
         
         return engine.get_current_state().dict()
