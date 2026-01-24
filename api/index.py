@@ -675,13 +675,13 @@ class TomasuloEngine:
                     if other_rs.qj == str(rob_idx):
                         other_rs.qj = None
                         other_rs.vj = result
-                        next_cycle = self.current_cycle if other_rs.op == "BRANCH" else self.current_cycle + 1
+                        next_cycle = self.current_cycle + 1
                         if other_rs.cdb_available_cycle is None or next_cycle > other_rs.cdb_available_cycle:
                             other_rs.cdb_available_cycle = next_cycle
                     if other_rs.qk == str(rob_idx):
                         other_rs.qk = None
                         other_rs.vk = result
-                        next_cycle = self.current_cycle if other_rs.op == "BRANCH" else self.current_cycle + 1
+                        next_cycle = self.current_cycle + 1
                         if other_rs.cdb_available_cycle is None or next_cycle > other_rs.cdb_available_cycle:
                             other_rs.cdb_available_cycle = next_cycle
 
