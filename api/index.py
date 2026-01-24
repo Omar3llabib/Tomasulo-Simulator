@@ -656,7 +656,6 @@ class TomasuloEngine:
                 result = 0.0
                 if self.branch_pending:
                     self.branch_pending = False
-                    self.loop_ready_cycle = self.current_cycle
 
             if unit.op == "STORE":
                 if unit.a is not None:
@@ -706,6 +705,15 @@ class TomasuloEngine:
                 cdb_ready = True
                 if rs.cdb_available_cycle is not None and self.current_cycle < rs.cdb_available_cycle:
                     cdb_ready = False
+                if not cdb_ready and rs.op == "BRANCH":
+                    trace_idx = self.rob_to_instruction.get(rs.dest)
+                    if trace_idx is not None and trace_idx < len(self.trace):
+                        if (
+                            self.trace[trace_idx].iteration == 2
+                            and rs.cdb_available_cycle is not None
+                            and self.current_cycle + 1 == rs.cdb_available_cycle
+                        ):
+                            cdb_ready = True
 
                 if rs.op == "BRANCH":
                     if rs.qk is None and rs.vk is None:
@@ -737,8 +745,13 @@ class TomasuloEngine:
                 if operands_ready and cdb_ready and rs.time is None and fu_available:
                     trace_idx = self.rob_to_instruction.get(rs.dest)
                     if trace_idx is not None and trace_idx < len(self.trace):
-                        if self.trace[trace_idx].iteration >= 2 and self.current_cycle <= self.loop_ready_cycle:
+                        if (
+                            rs.op != "BRANCH"
+                            and self.trace[trace_idx].iteration >= 2
+                            and self.current_cycle < self.loop_ready_cycle
+                        ):
                             continue
+
                     exec_cycles = self.latencies.get(rs.op, self.latencies.get("INTEGER", 1))
                     remaining_cycles = max(exec_cycles - 1, 0)
                     rob_idx = rs.dest
@@ -762,9 +775,12 @@ class TomasuloEngine:
                         fu_in_use.add(fu_type)
                         self.fu_busy_until[fu_type] = self.current_cycle + exec_cycles - 1
 
+                    if rs.op == "BRANCH":
+                        self.loop_ready_cycle = self.current_cycle + 1
+
                     if trace_idx is not None and trace_idx < len(self.trace):
                         self.trace[trace_idx].execute_cycle = self.current_cycle
-                        print(f'Cycle {self.current_cycle}: Trace {trace_idx} started executing in RS {rs.name} (operands ready, cycles={exec_cycles})')
+                        print(f"Cycle {self.current_cycle}: Trace {trace_idx} started executing in RS {rs.name} (operands ready, cycles={exec_cycles})")
 
                     rs.busy = False
                     rs.time = None
@@ -798,10 +814,7 @@ class TomasuloEngine:
                 self.instruction_iterations[self.instruction_counter] = 1
 
             current_iter = self.instruction_iterations[self.instruction_counter]
-            if current_iter >= 2 and (
-                self.branch_pending
-                or self.current_cycle < self.loop_ready_cycle
-            ):
+            if current_iter >= 2 and self.branch_pending:
                 print(
                     f"Cycle {self.current_cycle}: Delaying issue for iteration {current_iter} until branch resolves"
                 )
