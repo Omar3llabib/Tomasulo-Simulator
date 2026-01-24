@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Union
+
 from enum import Enum
 import os
 import copy
@@ -32,13 +33,14 @@ class InstructionType(str, Enum):
     LOAD = "LOAD"
     STORE = "STORE"
     BRANCH = "BRANCH"
+    INTEGER = "INTEGER"  # For addi, sltu operations
 
 
 class Instruction(BaseModel):
     type: InstructionType
     dest: str
     src1: str
-    src2: Optional[str] = None
+    src2: Optional[Union[str, int]] = None
     address: Optional[int] = None
     label_target: Optional[str] = None  # For branch instructions
 
@@ -77,6 +79,16 @@ class TraceEntry(BaseModel):
     commit_cycle: Optional[int] = None
 
 
+class ExecutionUnitEntry(BaseModel):
+    fu_type: str
+    op: str
+    remaining: int
+    rob_idx: int
+    trace_idx: int
+    vj: Optional[float] = None
+    vk: Optional[float] = None
+    a: Optional[int] = None
+
 
 class RegisterFileEntry(BaseModel):
     name: str
@@ -88,6 +100,7 @@ class TomasuloState(BaseModel):
     cycle: int
     instructions: List[Dict[str, Any]]
     reservation_stations: List[ReservationStation]
+    execution_units: List[ExecutionUnitEntry]
     reorder_buffer: List[ReorderBufferEntry]
     register_file: List[RegisterFileEntry]
     memory: Dict[int, float]
@@ -97,15 +110,16 @@ class TomasuloState(BaseModel):
 class TomasuloEngine:
     def __init__(self):
         self.latencies = {
-            "ADD": 1, "SUB": 1, "MULT": 10, "DIV": 40, 
-            "LOAD": 1, "STORE": 1, "BRANCH": 1
+            "ADD": 10, "SUB": 10, "MULT": 15, "DIV": 40, 
+            "LOAD": 1, "STORE": 1, "BRANCH": 1, "INTEGER": 1
         }
+        
         self.max_unroll_limit = 5  # Safety limit for loop unrolling
         
         # Hardware configuration
         self.issue_width = 1
         self.cdb_write_limit = 1
-        self.fu_pipelining = True
+        self.fu_pipelining = False  # Non-pipelined for Exercise 3.15
         
         self.reset()
     
@@ -159,6 +173,7 @@ class TomasuloEngine:
     
     def reset(self):
         self.current_cycle = 1  # Start at Cycle 1 per textbook standards
+        
         self.instruction_list: List[Instruction] = []
         self.state_history: List[TomasuloState] = []
         self.instruction_counter = 0
@@ -170,9 +185,20 @@ class TomasuloEngine:
         self.instruction_iterations: Dict[int, int] = {}  # Track iteration number for each instruction
         self.loop_unroll_count: Dict[str, int] = {}  # Track unroll count per loop (loop_id -> count)
         self.target_iterations = 1  # Default to 1 iteration if not specified
+        self.pre_unrolled = False
+
+        # Loop control timing (dynamic loops)
+        self.branch_pending = False
+        self.loop_ready_cycle = 1
 
         # TRACE STORAGE
         self.trace: List[TraceEntry] = []
+        
+        # Track non-pipelined FU occupancy (fu_type -> busy until cycle)
+        self.fu_busy_until: Dict[str, int] = {}
+        
+        # Execution units (in-flight execution)
+        self.execution_units: List[ExecutionUnitEntry] = []
         
         # Reservation Stations
         self.reservation_stations = [
@@ -194,9 +220,10 @@ class TomasuloEngine:
         self.rob_head = 0
         self.rob_tail = 0
         
-        # Register File (F0-F31)
+        # Register File (F0-F31, X0-X31)
         self.register_file = [
-            RegisterFileEntry(name=f"F{i}", value=0.0) for i in range(32)
+            *(RegisterFileEntry(name=f"F{i}", value=0.0) for i in range(32)),
+            *(RegisterFileEntry(name=f"X{i}", value=0.0) for i in range(32))
         ]
         
         # Memory (addresses 0-99)
@@ -208,9 +235,10 @@ class TomasuloEngine:
         # Save initial state
         self._save_state()
     
-    def load_instructions(self, instructions: List[Dict[str, Any]]):
+    def load_instructions(self, instructions: List[Dict[str, Any]], reset_state: bool = True):
         """Load instructions into the simulator"""
-        self.reset()
+        if reset_state:
+            self.reset()
         # Rebuild instruction_to_label from label info in instructions
         self.instruction_to_label = {}
         self.labels = {}  # Rebuild labels map
@@ -297,12 +325,11 @@ class TomasuloEngine:
                 'ST': 'STORE', 'SD': 'STORE', 'FSD': 'STORE', 'FSD.D': 'STORE',
                 'STORE': 'STORE',
                 'BNE': 'BRANCH', 'BEQ': 'BRANCH', 'BGT': 'BRANCH', 'BLT': 'BRANCH', 'BNEZ': 'BRANCH',
-                'ADDI': 'ADD', 'SLTU': 'ADD',  # Map integer instructions to ADD type for INT stations
+                'ADDI': 'INTEGER', 'SLTU': 'INTEGER',  # Map integer instructions to INTEGER type
             }
-            
             inst_type = type_mapping.get(inst_type_raw, inst_type_raw)
             
-            if inst_type not in ['ADD', 'SUB', 'MULT', 'DIV', 'LOAD', 'STORE', 'BRANCH']:
+            if inst_type not in ['ADD', 'SUB', 'MULT', 'DIV', 'LOAD', 'STORE', 'BRANCH', 'INTEGER']:
                 continue
             
             parsed = {
@@ -319,59 +346,75 @@ class TomasuloEngine:
             # Parse based on instruction type
             if inst_type in ['ADD', 'SUB', 'MULT', 'DIV']:
                 if len(parts) >= 4:
-                    parsed["dest"] = parts[1]
-                    parsed["src1"] = parts[2]
-                    parsed["src2"] = parts[3]
+                    parsed["dest"] = parts[1].upper()
+                    parsed["src1"] = parts[2].upper()
+                    parsed["src2"] = parts[3].upper()
                 elif len(parts) == 3:
-                    parsed["dest"] = parts[1]
-                    parsed["src1"] = parts[2]
+                    parsed["dest"] = parts[1].upper()
+                    parsed["src1"] = parts[2].upper()
+            
+            elif inst_type == 'INTEGER':
+                # Handle addi/sltu integer operations
+                if len(parts) >= 3:
+                    parsed["dest"] = parts[1].upper()
+                    parsed["src1"] = parts[2].upper()
+                    if len(parts) >= 4:
+                        src2_token = parts[3].lstrip('#')
+                        if re.fullmatch(r"-?\d+", src2_token):
+                            parsed["src2"] = int(src2_token)
+                        else:
+                            parsed["src2"] = src2_token.upper()
+                    elif inst_type_raw == 'ADDI':
+                        # Default missing immediate to 0 for timing-only runs
+                        parsed["src2"] = 0
+                    parsed["label_target"] = inst_type_raw  # Track integer op type
             
             elif inst_type == 'LOAD':
                 if len(parts) >= 2:
-                    parsed["dest"] = parts[1]
+                    parsed["dest"] = parts[1].upper()
                     if len(parts) >= 3:
                         offset_base = parts[2]
-                        match = re.match(r'(\d+)?\(?([RF]\d+)\)?', offset_base)
+                        match = re.match(r'(\d+)?\(?([RFXx]\d+)\)?', offset_base)
                         if match:
                             offset_str, base_reg = match.groups()
                             parsed["address"] = int(offset_str) if offset_str else 0
-                            parsed["src1"] = base_reg if base_reg else ""
+                            parsed["src1"] = base_reg.upper() if base_reg else ""
             
             elif inst_type == 'STORE':
                 if len(parts) >= 2:
-                    parsed["src1"] = parts[1]
+                    parsed["src1"] = parts[1].upper()
                     if len(parts) >= 3:
                         offset_base = parts[2]
-                        match = re.match(r'(\d+)?\(?([RF]\d+)\)?', offset_base)
+                        match = re.match(r'(\d+)?\(?([RFXx]\d+)\)?', offset_base)
                         if match:
                             offset_str, base_reg = match.groups()
                             parsed["address"] = int(offset_str) if offset_str else 0
-                            parsed["dest"] = base_reg if base_reg else ""
+                            parsed["dest"] = base_reg.upper() if base_reg else ""
             
             elif inst_type == 'BRANCH':
                 if len(parts) >= 4:
-                    parsed["src1"] = parts[1]
-                    parsed["src2"] = parts[2]
+                    parsed["src1"] = parts[1].upper()
+                    parsed["src2"] = parts[2].upper()
                     parsed["label_target"] = parts[3]
                 elif len(parts) == 3:
                     # Handle BNEZ: BNEZ reg, label (src1=reg, src2=None, label_target=label)
                     if inst_type_raw == 'BNEZ':
-                        parsed["src1"] = parts[1]
+                        parsed["src1"] = parts[1].upper()
                         parsed["src2"] = None
                         parsed["label_target"] = parts[2]
                     else:
-                        parsed["src1"] = parts[1]
-                        parsed["src2"] = parts[2]
+                        parsed["src1"] = parts[1].upper()
+                        parsed["src2"] = parts[2].upper()
                 elif len(parts) == 2:
                     # Handle BNEZ with exactly 2 parts: BNEZ reg label
-                    parsed["src1"] = parts[1]
+                    parsed["src1"] = parts[1].upper()
                     parsed["src2"] = None
                     parsed["label_target"] = parts[2] if len(parts) > 2 else None
 
             parsed_instructions.append(parsed)
             instruction_index += 1
 
-        self.load_instructions(parsed_instructions)
+        self.load_instructions(parsed_instructions, reset_state=False)
 
     def pre_unroll_loops(self, iterations: int):
         """Statically unroll loops for the specified number of iterations"""
@@ -407,6 +450,7 @@ class TomasuloEngine:
         # Create new instruction list with unrolled loops
         new_instructions = []
         new_labels = {}
+        new_instruction_iterations: Dict[int, int] = {}
         
         i = 0
         while i < len(self.instruction_list):
@@ -457,9 +501,11 @@ class TomasuloEngine:
                         if loop_idx == loop_start['start_idx']:
                             # Add the instruction with the iteration label
                             new_instructions.append(new_inst)
+                            new_instruction_iterations[len(new_instructions) - 1] = iter_num + 1
                             new_labels[iter_label] = len(new_instructions) - 1
                         else:
                             new_instructions.append(new_inst)
+                            new_instruction_iterations[len(new_instructions) - 1] = iter_num + 1
                 
                 # Skip the original loop instructions
                 i = loop_start['end_idx'] + 1
@@ -486,11 +532,14 @@ class TomasuloEngine:
                             break
                 
                 new_instructions.append(new_inst)
+                new_instruction_iterations[len(new_instructions) - 1] = 1
                 i += 1
         
         # Update the engine state with the unrolled instructions
         self.instruction_list = new_instructions
         self.labels = new_labels
+        self.instruction_iterations = new_instruction_iterations
+        self.pre_unrolled = True
         
         # Rebuild instruction_to_label mapping
         self.instruction_to_label = {}
@@ -503,438 +552,40 @@ class TomasuloEngine:
         # Save the unrolled state
         self._save_state()
 
-    def step_forward(self) -> TomasuloState:
-        """Advance one clock cycle - Process stages in order: Commit -> Write Result -> Execute -> Issue"""
-        
-        # Initialize counters at the very beginning
-        write_count = 0
-        issued_this_cycle = 0
-        
-        # 1. COMMIT STAGE - Commit completed instructions from ROB head
-        if self.rob[self.rob_head].busy and self.rob[self.rob_head].state == "Write Result":
-            rob_entry = self.rob[self.rob_head]
-            print(f'Cycle {self.current_cycle}: Committing ROB entry {self.rob_head}')
-            
-            # Use trace_idx from rob_to_instruction
-            trace_idx = self.rob_to_instruction.get(self.rob_head)
-            if trace_idx is not None and trace_idx < len(self.trace):
-                self.trace[trace_idx].commit_cycle = self.current_cycle
-
-            if rob_entry.destination:
-                # Update register file if this ROB is still the latest producer
-                for rf in self.register_file:
-                    if rf.name == rob_entry.destination and rf.q == str(self.rob_head):
-                        rf.value = rob_entry.value
-                        rf.q = None
-            
-            self.rob[self.rob_head].busy = False
-            self.rob[self.rob_head].state = "Commit"
-            self.rob_head = (self.rob_head + 1) % len(self.rob)
-        
-        # 2. WRITE RESULT STAGE - Write results to CDB (respect CDB write limit)
-        ready_to_write = []
-        
-        # Find instructions ready to write (execution completed)
-        for rs in self.reservation_stations:
-            if rs.busy and rs.op and rs.time is not None and rs.time == 0:
-                ready_to_write.append(rs)
-        
-        # Process write results (respect CDB write limit)
-        for rs in ready_to_write:
-            if write_count >= self.cdb_write_limit:
-                print(f'Cycle {self.current_cycle}: CDB write limit reached, delaying write for {rs.name}')
-                continue  # Skip this write for now, will try next cycle
-                
-            result = 0.0
-            rob_idx = rs.dest
-            
-            # Compute result based on operation
-            if rs.op == "ADD": result = (rs.vj or 0) + (rs.vk or 0)
-            elif rs.op == "SUB": result = (rs.vj or 0) - (rs.vk or 0)
-            elif rs.op == "MULT": result = (rs.vj or 0) * (rs.vk or 0)
-            elif rs.op == "DIV": result = (rs.vj / rs.vk) if rs.vk != 0 else 0
-            elif rs.op == "LOAD": result = self.memory.get(rs.a, 0.0)
-            elif rs.op == "BRANCH":
-                # Branch execution signals completion
-                result = 0.0
-            
-            # Store Result for STORE instructions
-            if rs.op == "STORE":
-                 if rs.a is not None:
-                     self.memory[rs.a] = rs.vk if rs.vk is not None else 0.0
-                     print(f"Stored {rs.vk} at address {rs.a}")
-
-            # BROADCAST to CDB
-            trace_idx = self.rob_to_instruction.get(rob_idx)
-            if trace_idx is not None and trace_idx < len(self.trace):
-                self.trace[trace_idx].write_result_cycle = self.current_cycle
-            
-            if rob_idx is not None:
-                self.rob[rob_idx].value = result
-                self.rob[rob_idx].state = "Write Result"
-                self.execution_counter += 1
-                
-                # Update all waiting stations (CDB Broadcast)
-                for other_rs in self.reservation_stations:
-                    if other_rs.busy:
-                        if other_rs.qj == str(rob_idx):
-                            other_rs.qj = None
-                            other_rs.vj = result
-                        if other_rs.qk == str(rob_idx):
-                            other_rs.qk = None
-                            other_rs.vk = result
-                
-                # Update Registers waiting for this value
-                if self.rob[rob_idx].destination:
-                    for rf in self.register_file:
-                        if rf.name == self.rob[rob_idx].destination and rf.q == str(rob_idx):
-                            rf.value = result
-                            rf.q = None
-            
-            # Release Station - Immediate recovery for integer stations
-            rs.busy = False
-            rs.time = None
-            rs.op = None
-            rs.vj = None; rs.vk = None
-            rs.qj = None; rs.qk = None
-            rs.a = None; rs.dest = None
-            rs.cdb_available_cycle = None  # Reset CDB tracking
-            
-            # Integer Station Recovery: Integer stations are freed immediately
-            # This allows subsequent addi/sltu instructions to issue in following cycles
-            if rs.name.startswith("INT"):
-                print(f'Cycle {self.current_cycle}: Integer station {rs.name} immediately freed for next instruction')
-            
-            write_count += 1
-        
-        # 3. EXECUTE STAGE - Advance execution and check for new starts
-        # Track FU usage for pipelining check
-        fu_in_use = set()
-        
-        for rs in self.reservation_stations:
-            if rs.busy and rs.op:
-                # Check if operands are ready (Qj and Qk must be None)
-                operands_ready = (rs.qj is None and rs.qk is None)
-                
-                # Strict CDB Dependency: Check if waiting for CDB values that aren't available yet
-                # According to Exercise 3.15, dependent instructions must wait one cycle after source writes to CDB
-                # Example: If source writes at Cycle 3, dependent can start execution at Cycle 4
-                cdb_ready = True
-                if rs.qj is not None and rs.qj.isdigit():
-                    rob_idx_j = int(rs.qj)
-                    if rob_idx_j < len(self.rob):
-                        # Check if source ROB has written to CDB
-                        if self.rob[rob_idx_j].state != "Write Result":
-                            cdb_ready = False
-                        else:
-                            # Source has written to CDB, find when it wrote
-                            source_trace_idx = self.rob_to_instruction.get(rob_idx_j)
-                            if source_trace_idx is not None:
-                                source_trace = self.trace[source_trace_idx]
-                                if source_trace.write_result_cycle is not None:
-                                    # Dependent must wait until next cycle after source write
-                                    if self.current_cycle <= source_trace.write_result_cycle:
-                                        cdb_ready = False
-                                else:
-                                    # Source hasn't written yet
-                                    cdb_ready = False
-                
-                if rs.qk is not None and rs.qk.isdigit():
-                    rob_idx_k = int(rs.qk)
-                    if rob_idx_k < len(self.rob):
-                        # Check if source ROB has written to CDB
-                        if self.rob[rob_idx_k].state != "Write Result":
-                            cdb_ready = False
-                        else:
-                            # Source has written to CDB, find when it wrote
-                            source_trace_idx = self.rob_to_instruction.get(rob_idx_k)
-                            if source_trace_idx is not None:
-                                source_trace = self.trace[source_trace_idx]
-                                if source_trace.write_result_cycle is not None:
-                                    # Dependent must wait until next cycle after source write
-                                    if self.current_cycle <= source_trace.write_result_cycle:
-                                        cdb_ready = False
-                                else:
-                                    # Source hasn't written yet
-                                    cdb_ready = False
-                
-                # For BRANCH, both vj and vk must be ready
-                if rs.op == "BRANCH":
-                    operands_ready = operands_ready and rs.vj is not None and rs.vk is not None
-                elif rs.op == "LOAD":
-                    # LOAD only needs address (rs.a), not vj/vk
-                    pass 
-                else:
-                    # For ADD/SUB/MULT/DIV, need both vj and vk
-                    operands_ready = operands_ready and rs.vj is not None and rs.vk is not None
-                
-                # Check FU pipelining constraint
-                fu_type = None
-                if rs.op in ["ADD", "SUB"]:
-                    fu_type = "ADD_SUB"
-                elif rs.op in ["MULT", "DIV"]:
-                    fu_type = "MULT_DIV"
-                elif rs.op == "LOAD":
-                    fu_type = "LOAD"
-                elif rs.op == "STORE":
-                    fu_type = "STORE"
-                elif rs.op == "BRANCH":
-                    fu_type = "BRANCH"
-                
-                # Check if FU is already in use (when pipelining is disabled)
-                fu_available = self.fu_pipelining or fu_type not in fu_in_use
-                
-                # Initialize time ONLY when operands are ready, CDB is available, and FU is available
-                if operands_ready and cdb_ready and rs.time is None and fu_available:
-                    # Set execution cycles based on operation type using configurable latencies
-                    rs.time = self.latencies.get(rs.op, 1)
-                    
-                    # Mark FU as in use for this cycle
-                    if not self.fu_pipelining:
-                        fu_in_use.add(fu_type)
-                    
-                    # Track execute_cycle when execution starts
-                    rob_idx = rs.dest
-                    if rob_idx is not None:
-                        trace_idx = self.rob_to_instruction.get(rob_idx)
-                        if trace_idx is not None and trace_idx < len(self.trace):
-                            self.trace[trace_idx].execute_cycle = self.current_cycle
-                            print(f'Cycle {self.current_cycle}: Trace {trace_idx} started executing in RS {rs.name} (operands ready, cycles={rs.time})')
-                
-                # Decrement cycles remaining if execution has started
-                if rs.time is not None and rs.time > 0:
-                    rs.time -= 1
-                    print(f'Cycle {self.current_cycle}: RS {rs.name} executing {rs.op}, cycles remaining: {rs.time}')
-        
-        # 4. ISSUE STAGE - Issue new instructions if possible (respect issue width)
-        while (issued_this_cycle < self.issue_width and 
-               self.instruction_counter < len(self.instruction_list)):
-            inst = self.instruction_list[self.instruction_counter]
-            print(f'Cycle {self.current_cycle}: Attempting to issue instruction {self.instruction_counter}: {inst.type.value}')
-            
-            # Find free ROB entry
-            rob_idx = self._find_free_rob_entry()
-            
-            if rob_idx is None:
-                print(f'Cycle {self.current_cycle}: Cannot issue - ROB full')
-                break  # Stop issuing if ROB is full
-            else:
-                # Find appropriate reservation station
-                rs_idx = self._find_reservation_station(inst.type)
-                if rs_idx is None:
-                    print(f'Cycle {self.current_cycle}: Cannot issue - No free reservation station for {inst.type.value}')
-                    break  # Stop issuing if no RS available
-                else:
-                    rs = self.reservation_stations[rs_idx]
-                    
-                    # Create Trace Entry
-                    trace_idx = len(self.trace)
-                    
-                    # Determine iteration
-                    if self.instruction_counter not in self.instruction_iterations:
-                        self.instruction_iterations[self.instruction_counter] = 1
-                    
-                    current_iter = self.instruction_iterations[self.instruction_counter]
-                    
-                    new_trace = TraceEntry(
-                        trace_index=trace_idx,
-                        instruction_index=self.instruction_counter,
-                        iteration=current_iter,
-                        issue_cycle=self.current_cycle
-                    )
-                    self.trace.append(new_trace)
-                    
-                    # Issue instruction (Use inst data)
-                    rs.busy = True
-                    rs.op = inst.type.value
-                    rs.dest = rob_idx
-                    
-                    # Get source register values
-                    if inst.src1:
-                        val1, q1 = self._get_register_value(inst.src1)
-                        if inst.type == InstructionType.STORE:
-                            # For STORE, src1 is the value to store
-                            rs.vk = val1
-                            rs.qk = q1
-                        else:
-                            rs.vj = val1
-                            rs.qj = q1
-                    
-                    if inst.src2:
-                        val2, q2 = self._get_register_value(inst.src2)
-                        rs.vk = val2
-                        rs.qk = q2
-                    
-                    if inst.type == InstructionType.LOAD:
-                        rs.a = inst.address if inst.address is not None else 0
-                    elif inst.type == InstructionType.STORE:
-                        rs.a = inst.address if inst.address is not None else 0
-                        if inst.dest:
-                             val_base, q_base = self._get_register_value(inst.dest)
-                             rs.vj = val_base
-                             rs.qj = q_base
-                    
-                    # Update ROB
-                    self.rob[rob_idx].busy = True
-                    self.rob[rob_idx].value = None
-                    if inst.type == InstructionType.BRANCH:
-                        self.rob[rob_idx].instruction = f"{inst.type.value} {inst.src1}, {inst.src2}, {inst.label_target or ''}"
-                        self.rob[rob_idx].destination = None
-                    else:
-                        target = inst.dest if inst.type != InstructionType.STORE else inst.src1
-                        self.rob[rob_idx].instruction = f"{inst.type.value} {target}"
-                        self.rob[rob_idx].destination = inst.dest if inst.type != InstructionType.STORE else None
-                    
-                    self.rob[rob_idx].state = "Issue"
-                    
-                    # Map ROB -> Trace Index
-                    self.rob_to_instruction[rob_idx] = trace_idx
-                    
-                    # Update register file (Renaming)
-                    if inst.type != InstructionType.BRANCH and inst.type != InstructionType.STORE:
-                         for rf in self.register_file:
-                            if rf.name == inst.dest:
-                                rf.q = str(rob_idx)
-                    
-                    self.rob_tail = (self.rob_tail + 1) % len(self.rob)
-                    self.total_issued_count += 1
-                    issued_this_cycle += 1  # Increment issued count
-                    
-                    # --- CONTROL FLOW UPDATE (PC) ---
-                    # Default: Advance PC
-                    next_pc = self.instruction_counter + 1
-                    
-                    if inst.type == InstructionType.BRANCH and inst.label_target:
-                        # Dynamic Loop Handling
-                        loop_label = inst.label_target
-                        
-                        # Initialize loop counter for this label if needed
-                        if loop_label not in self.loop_unroll_count:
-                             self.loop_unroll_count[loop_label] = 0
-                             
-                        # Check if we should branch (Loop logic)
-                        current_loop_iter = self.loop_unroll_count[loop_label]
-                        if current_loop_iter < (self.target_iterations - 1):
-                            # Take Branch
-                            if loop_label in self.labels:
-                                next_pc = self.labels[loop_label]
-                                self.loop_unroll_count[loop_label] += 1
-                            else:
-                                print(f"Warning: Label {loop_label} not found")
-                        else:
-                            # Fall through
-                            print(f"Loop {loop_label} finished {self.target_iterations} iterations. Falling through.")
-                        
-                    self.instruction_counter = next_pc
-                    
-                    # Update iteration count for the NEXT instruction
-                    if next_pc < len(self.instruction_list):
-                        current_pc = new_trace.instruction_index
-                        
-                        if next_pc <= current_pc: 
-                             # Backward jump (or stay same) - New iteration for target
-                             current_val = self.instruction_iterations.get(next_pc, 0)
-                             self.instruction_iterations[next_pc] = current_val + 1
-                        else:
-                             # Forward flow - Propagate iteration count
-                             self.instruction_iterations[next_pc] = current_iter
-
-        
-        self.current_cycle += 1
-        self._save_state()
-        return self.state_history[-1]
-
-    # --- Helper Methods ---
-
-    def _find_free_rob_entry(self) -> Optional[int]:
-        """Find the next free ROB entry using tail pointer"""
-        # In a circular buffer, check if tail is free
-        if not self.rob[self.rob_tail].busy:
-            return self.rob_tail
-        return None
-
-    def _find_reservation_station(self, inst_type: InstructionType) -> Optional[int]:
-        """Find a free reservation station for the instruction type"""
-        target_prefixes = []
-        
-        # Map based on original instruction types before aliasing
-        # fld / fsd -> LOAD / STORE stations
-        if inst_type == InstructionType.LOAD:
-            target_prefixes = ["LOAD"]
-        elif inst_type == InstructionType.STORE:
-            target_prefixes = ["STORE"]
-        
-        # fmul.d / fdiv.d -> FP_MULT stations  
-        elif inst_type in [InstructionType.MULT, InstructionType.DIV]:
-            target_prefixes = ["FP_MULT"]
-        
-        # fadd.d / fsub.d -> FP_ADD stations
-        elif inst_type in [InstructionType.ADD, InstructionType.SUB]:
-            # Check if this is an integer instruction (addi/sltu) by looking at the original instruction
-            # For now, we'll use a heuristic: if it maps to ADD but has integer-like operands, use INT
-            # This is a simplified approach - in a real implementation, we'd track the original instruction type
-            target_prefixes = ["FP_ADD", "INT"]  # Try FP_ADD first, then INT
-        
-        # addi / sltu / bnez -> INT stations
-        elif inst_type == InstructionType.BRANCH:
-            target_prefixes = ["INT"]
-
-        for idx, rs in enumerate(self.reservation_stations):
-            if not rs.busy:
-                # Check if RS name starts with any of the allowed prefixes
-                if any(rs.name.startswith(prefix) for prefix in target_prefixes):
-                    return idx
-        return None
-
-    def _get_register_value(self, reg_name: str) -> Tuple[float, Optional[str]]:
-        """Get value or ROB dependency (Q) for a register"""
-        for rf in self.register_file:
-            if rf.name == reg_name:
-                if rf.q is not None:
-                    return (0.0, rf.q)  # Value not ready, return Q
-                return (rf.value, None)  # Value ready
-        return (0.0, None) # Register not found, default 0
-
     def _save_state(self):
         """Save current state to history"""
-        # Prepare instructions list for frontend - show ALL instructions in queue
         display_instructions = []
-        
-        # Show all instructions in the instruction list (including unrolled ones)
+
         for idx, inst in enumerate(self.instruction_list):
             inst_dict = inst.dict()
-            
-            # Get label if this instruction has one
             inst_dict["label"] = self.instruction_to_label.get(idx)
-            
-            # Find corresponding trace entry if this instruction has been issued
+
             trace_entry = None
             for te in self.trace:
                 if te.instruction_index == idx:
                     trace_entry = te
                     break
-            
+
             if trace_entry:
-                # Instruction has been issued - show timing info
                 inst_dict["iteration"] = trace_entry.iteration
-                inst_dict["issue_cycle"] = str(trace_entry.issue_cycle) if trace_entry.issue_cycle is not None else "-"
-                inst_dict["execute_cycle"] = str(trace_entry.execute_cycle) if trace_entry.execute_cycle is not None else "-"
-                inst_dict["write_result_cycle"] = str(trace_entry.write_result_cycle) if trace_entry.write_result_cycle is not None else "-"
-                inst_dict["commit_cycle"] = str(trace_entry.commit_cycle) if trace_entry.commit_cycle is not None else "-"
+                inst_dict["instruction"] = inst.type.value
+                inst_dict["issue_at"] = trace_entry.issue_cycle
+                inst_dict["exec_start"] = trace_entry.execute_cycle
+                inst_dict["write_cdb"] = trace_entry.write_result_cycle
             else:
-                # Instruction not yet issued - show placeholder values
                 inst_dict["iteration"] = 0
-                inst_dict["issue_cycle"] = "-"
-                inst_dict["execute_cycle"] = "-"
-                inst_dict["write_result_cycle"] = "-"
-                inst_dict["commit_cycle"] = "-"
-            
+                inst_dict["instruction"] = inst.type.value
+                inst_dict["issue_at"] = None
+                inst_dict["exec_start"] = None
+                inst_dict["write_cdb"] = None
+
             display_instructions.append(inst_dict)
 
         state = TomasuloState(
             cycle=self.current_cycle,
             instructions=display_instructions,
             reservation_stations=[copy.deepcopy(rs) for rs in self.reservation_stations],
+            execution_units=copy.deepcopy(self.execution_units),
             reorder_buffer=[copy.deepcopy(rob) for rob in self.rob],
             register_file=[copy.deepcopy(rf) for rf in self.register_file],
             memory=copy.deepcopy(self.memory),
@@ -948,44 +599,337 @@ class TomasuloEngine:
         )
         self.state_history.append(state)
 
+    def step_forward(self) -> TomasuloState:
+        """Advance one clock cycle - Process stages in order: Commit -> Write Result -> Execute -> Issue"""
+
+        write_count = 0
+        issued_this_cycle = 0
+
+        if self.rob[self.rob_head].busy and self.rob[self.rob_head].state == "Write Result":
+            rob_entry = self.rob[self.rob_head]
+            print(f'Cycle {self.current_cycle}: Committing ROB entry {self.rob_head}')
+
+            trace_idx = self.rob_to_instruction.get(self.rob_head)
+            if trace_idx is not None and trace_idx < len(self.trace):
+                self.trace[trace_idx].commit_cycle = self.current_cycle
+
+            if rob_entry.destination:
+                for rf in self.register_file:
+                    if rf.name == rob_entry.destination and rf.q == str(self.rob_head):
+                        rf.value = rob_entry.value
+                        rf.q = None
+
+            self.rob[self.rob_head].busy = False
+            self.rob[self.rob_head].state = "Commit"
+            self.rob_head = (self.rob_head + 1) % len(self.rob)
+
+        ready_to_write = []
+        for unit in self.execution_units:
+            if unit.remaining == 0:
+                ready_to_write.append(unit)
+
+        ready_to_write.sort(key=lambda unit: unit.trace_idx)
+        for unit in ready_to_write:
+            uses_cdb = unit.op not in {"STORE", "BRANCH"}
+            if uses_cdb and write_count >= self.cdb_write_limit:
+                continue
+
+            result = 0.0
+            rob_idx = unit.rob_idx
+            trace_idx = unit.trace_idx
+
+            if unit.op == "ADD":
+                result = (unit.vj or 0) + (unit.vk or 0)
+            elif unit.op == "SUB":
+                result = (unit.vj or 0) - (unit.vk or 0)
+            elif unit.op == "MULT":
+                result = (unit.vj or 0) * (unit.vk or 0)
+            elif unit.op == "DIV":
+                result = (unit.vj / unit.vk) if unit.vk != 0 else 0
+            elif unit.op == "ADDI":
+                result = (unit.vj or 0) + (unit.vk or 0)
+            elif unit.op == "SLTU":
+                result = 1.0 if (unit.vj or 0) < (unit.vk or 0) else 0.0
+            elif unit.op == "LOAD":
+                result = self.memory.get(unit.a, 0.0)
+            elif unit.op == "BRANCH":
+                result = 0.0
+                if self.branch_pending:
+                    self.branch_pending = False
+                    self.loop_ready_cycle = self.current_cycle
+
+            if unit.op == "STORE":
+                if unit.a is not None:
+                    self.memory[unit.a] = unit.vk if unit.vk is not None else 0.0
+                    print(f"Stored {unit.vk} at address {unit.a}")
+
+            if uses_cdb and trace_idx is not None and trace_idx < len(self.trace):
+                self.trace[trace_idx].write_result_cycle = self.current_cycle
+
+            self.rob[rob_idx].value = result
+            self.rob[rob_idx].state = "Write Result"
+            self.execution_counter += 1
+
+            for other_rs in self.reservation_stations:
+                if other_rs.busy:
+                    if other_rs.qj == str(rob_idx):
+                        other_rs.qj = None
+                        other_rs.vj = result
+                        next_cycle = self.current_cycle if other_rs.op == "BRANCH" else self.current_cycle + 1
+                        if other_rs.cdb_available_cycle is None or next_cycle > other_rs.cdb_available_cycle:
+                            other_rs.cdb_available_cycle = next_cycle
+                    if other_rs.qk == str(rob_idx):
+                        other_rs.qk = None
+                        other_rs.vk = result
+                        next_cycle = self.current_cycle if other_rs.op == "BRANCH" else self.current_cycle + 1
+                        if other_rs.cdb_available_cycle is None or next_cycle > other_rs.cdb_available_cycle:
+                            other_rs.cdb_available_cycle = next_cycle
+
+            if self.rob[rob_idx].destination:
+                for rf in self.register_file:
+                    if rf.name == self.rob[rob_idx].destination and rf.q == str(rob_idx):
+                        rf.value = self.rob[rob_idx].value
+                        rf.q = None
+
+            self.execution_units = [u for u in self.execution_units if u != unit]
+            if uses_cdb:
+                write_count += 1
+
+        fu_in_use = set()
+        for unit in self.execution_units:
+            if unit.remaining > 0:
+                unit.remaining -= 1
+
+        for rs in self.reservation_stations:
+            if rs.busy and rs.op:
+                operands_ready = (rs.qj is None and rs.qk is None)
+                cdb_ready = True
+                if rs.cdb_available_cycle is not None and self.current_cycle < rs.cdb_available_cycle:
+                    cdb_ready = False
+
+                if rs.op == "BRANCH":
+                    if rs.qk is None and rs.vk is None:
+                        operands_ready = operands_ready and rs.vj is not None
+                    else:
+                        operands_ready = operands_ready and rs.vj is not None and rs.vk is not None
+                elif rs.op == "LOAD":
+                    pass
+                else:
+                    operands_ready = operands_ready and rs.vj is not None and rs.vk is not None
+
+                fu_type = None
+                if rs.op in ["ADD", "SUB"]:
+                    fu_type = "ADD_SUB"
+                elif rs.op in ["MULT", "DIV"]:
+                    fu_type = "MULT_DIV"
+                elif rs.op == "LOAD":
+                    fu_type = "LOAD"
+                elif rs.op == "STORE":
+                    fu_type = "STORE"
+                elif rs.op == "BRANCH":
+                    fu_type = "INT"
+                elif rs.op in ["INTEGER", "ADDI", "SLTU"]:
+                    fu_type = "INT"
+
+                busy_until = self.fu_busy_until.get(fu_type, 0)
+                fu_available = self.fu_pipelining or (fu_type not in fu_in_use and self.current_cycle > busy_until)
+
+                if operands_ready and cdb_ready and rs.time is None and fu_available:
+                    trace_idx = self.rob_to_instruction.get(rs.dest)
+                    if trace_idx is not None and trace_idx < len(self.trace):
+                        if self.trace[trace_idx].iteration >= 2 and self.current_cycle <= self.loop_ready_cycle:
+                            continue
+                    exec_cycles = self.latencies.get(rs.op, self.latencies.get("INTEGER", 1))
+                    remaining_cycles = max(exec_cycles - 1, 0)
+                    rob_idx = rs.dest
+                    trace_idx = self.rob_to_instruction.get(rob_idx)
+
+                    if rob_idx is not None and trace_idx is not None:
+                        self.execution_units.append(
+                            ExecutionUnitEntry(
+                                fu_type=fu_type,
+                                op=rs.op,
+                                remaining=remaining_cycles,
+                                rob_idx=rob_idx,
+                                trace_idx=trace_idx,
+                                vj=rs.vj,
+                                vk=rs.vk,
+                                a=rs.a
+                            )
+                        )
+
+                    if not self.fu_pipelining:
+                        fu_in_use.add(fu_type)
+                        self.fu_busy_until[fu_type] = self.current_cycle + exec_cycles - 1
+
+                    if trace_idx is not None and trace_idx < len(self.trace):
+                        self.trace[trace_idx].execute_cycle = self.current_cycle
+                        print(f'Cycle {self.current_cycle}: Trace {trace_idx} started executing in RS {rs.name} (operands ready, cycles={exec_cycles})')
+
+                    rs.busy = False
+                    rs.time = None
+                    rs.op = None
+                    rs.vj = None
+                    rs.vk = None
+                    rs.qj = None
+                    rs.qk = None
+                    rs.a = None
+                    rs.dest = None
+                    rs.cdb_available_cycle = None
+
+        while (issued_this_cycle < self.issue_width and
+               self.instruction_counter < len(self.instruction_list)):
+            inst = self.instruction_list[self.instruction_counter]
+            print(f'Cycle {self.current_cycle}: Attempting to issue instruction {self.instruction_counter}: {inst.type.value}')
+
+            rob_idx = self._find_free_rob_entry()
+            if rob_idx is None:
+                print(f'Cycle {self.current_cycle}: Cannot issue - ROB full')
+                break
+
+            rs_idx = self._find_reservation_station(inst.type)
+            if rs_idx is None:
+                print(f'Cycle {self.current_cycle}: Cannot issue - No free reservation station for {inst.type.value}')
+                break
+
+            rs = self.reservation_stations[rs_idx]
+
+            if self.instruction_counter not in self.instruction_iterations:
+                self.instruction_iterations[self.instruction_counter] = 1
+
+            current_iter = self.instruction_iterations[self.instruction_counter]
+            if current_iter >= 2 and (
+                self.branch_pending
+                or self.current_cycle < self.loop_ready_cycle
+            ):
+                print(
+                    f"Cycle {self.current_cycle}: Delaying issue for iteration {current_iter} until branch resolves"
+                )
+                break
+
+            trace_idx = len(self.trace)
+            new_trace = TraceEntry(
+                trace_index=trace_idx,
+                instruction_index=self.instruction_counter,
+                iteration=current_iter,
+                issue_cycle=self.current_cycle
+            )
+            self.trace.append(new_trace)
+
+            rs.busy = True
+            if inst.type == InstructionType.INTEGER and inst.label_target:
+                rs.op = inst.label_target
+            else:
+                rs.op = inst.type.value
+            rs.dest = rob_idx
+
+            if inst.src1:
+                val1, q1 = self._get_register_value(inst.src1)
+                if inst.type == InstructionType.STORE:
+                    rs.vk = val1
+                    rs.qk = q1
+                else:
+                    rs.vj = val1
+                    rs.qj = q1
+
+            if inst.src2 is not None:
+                if inst.type == InstructionType.INTEGER and isinstance(inst.src2, int):
+                    rs.vk = float(inst.src2)
+                    rs.qk = None
+                else:
+                    val2, q2 = self._get_register_value(inst.src2)
+                    rs.vk = val2
+                    rs.qk = q2
+            elif inst.type == InstructionType.INTEGER and rs.op == "ADDI":
+                rs.vk = 0.0
+                rs.qk = None
+
+            if inst.type == InstructionType.LOAD:
+                rs.a = inst.address if inst.address is not None else 0
+            elif inst.type == InstructionType.STORE:
+                rs.a = inst.address if inst.address is not None else 0
+                if inst.dest:
+                    val_base, q_base = self._get_register_value(inst.dest)
+                    rs.vj = val_base
+                    rs.qj = q_base
+
+            self.rob[rob_idx].busy = True
+            self.rob[rob_idx].value = None
+            if inst.type == InstructionType.BRANCH:
+                self.rob[rob_idx].instruction = f"{inst.type.value} {inst.src1}, {inst.src2}, {inst.label_target or ''}"
+                self.rob[rob_idx].destination = None
+            else:
+                target = inst.dest if inst.type != InstructionType.STORE else inst.src1
+                self.rob[rob_idx].instruction = f"{inst.type.value} {target}"
+                self.rob[rob_idx].destination = inst.dest if inst.type != InstructionType.STORE else None
+
+            self.rob[rob_idx].state = "Issue"
+            self.rob_to_instruction[rob_idx] = trace_idx
+
+            if inst.type != InstructionType.BRANCH and inst.type != InstructionType.STORE:
+                for rf in self.register_file:
+                    if rf.name == inst.dest:
+                        rf.q = str(rob_idx)
+
+            self.rob_tail = (self.rob_tail + 1) % len(self.rob)
+            self.total_issued_count += 1
+            issued_this_cycle += 1
+
+            next_pc = self.instruction_counter + 1
+            if inst.type == InstructionType.BRANCH and inst.label_target and not self.pre_unrolled:
+                loop_label = inst.label_target
+                if loop_label not in self.loop_unroll_count:
+                    self.loop_unroll_count[loop_label] = 0
+
+                current_loop_iter = self.loop_unroll_count[loop_label]
+                if current_loop_iter < (self.target_iterations - 1):
+                    if loop_label in self.labels:
+                        next_pc = self.labels[loop_label]
+                        self.loop_unroll_count[loop_label] += 1
+                        self.branch_pending = True
+                    else:
+                        print(f"Warning: Label {loop_label} not found")
+                else:
+                    print(f"Loop {loop_label} finished {self.target_iterations} iterations. Falling through.")
+
+            self.instruction_counter = next_pc
+
+            if not self.pre_unrolled and next_pc < len(self.instruction_list):
+                current_pc = new_trace.instruction_index
+                if next_pc <= current_pc:
+                    current_val = self.instruction_iterations.get(next_pc, 0)
+                    self.instruction_iterations[next_pc] = current_val + 1
+                else:
+                    self.instruction_iterations[next_pc] = current_iter
+
+        self.current_cycle += 1
+        self._save_state()
+        return self.state_history[-1]
+
     def step_backward(self) -> Optional[TomasuloState]:
         """Go back one state in history"""
         if len(self.state_history) <= 1:
             return None
-        
-        # Remove current state
+
         self.state_history.pop()
-        
-        # Restore previous state
         prev_state = self.state_history[-1]
         self._restore_state(prev_state)
-        
         return prev_state
-    
+
     def _restore_state(self, state: TomasuloState):
         """Restore engine state from saved state using deepcopy"""
         self.current_cycle = state.cycle
-        # Instructions are static, usually don't need full reload but safe to do so
-        # Important: labels/maps need to be consistent. 
-        # Ideally we don't wipe instruction list if just stepping back logic
-        
         self.reservation_stations = [copy.deepcopy(rs) for rs in state.reservation_stations]
         self.rob = [copy.deepcopy(rob) for rob in state.reorder_buffer]
         self.register_file = [copy.deepcopy(rf) for rf in state.register_file]
+        self.execution_units = [copy.deepcopy(unit) for unit in state.execution_units]
         self.memory = copy.deepcopy(state.memory)
-        
-        self.memory = copy.deepcopy(state.memory)
-        
+
         self.total_issued_count = state.stats["instructions_issued"]
-        self.instruction_counter = state.stats.get("pc", 0) # Restore PC
+        self.instruction_counter = state.stats.get("pc", 0)
         self.execution_counter = state.stats["instructions_executed"]
         self.rob_head = state.stats["rob_head"]
         self.rob_tail = state.stats["rob_tail"]
-        
-        # Restore timing maps from history is harder unless stored. 
-        # For simple UI rollback, we assume maps in `self` are cumulative or we rebuild them.
-        # Here we just keep existing maps, but logically they might need rollback if we strictly restart.
-        # For now, UI state is sufficient.
 
     def get_current_state(self) -> TomasuloState:
         """Get current state"""
@@ -993,6 +937,43 @@ class TomasuloEngine:
             return self.state_history[-1]
         self._save_state()
         return self.state_history[-1]
+
+    def _find_free_rob_entry(self) -> Optional[int]:
+        """Find the next free ROB entry using tail pointer"""
+        if not self.rob[self.rob_tail].busy:
+            return self.rob_tail
+        return None
+
+    def _find_reservation_station(self, inst_type: InstructionType) -> Optional[int]:
+        """Find a free reservation station for the instruction type"""
+        target_prefixes = []
+
+        if inst_type == InstructionType.LOAD:
+            target_prefixes = ["LOAD"]
+        elif inst_type == InstructionType.STORE:
+            target_prefixes = ["STORE"]
+        elif inst_type in [InstructionType.MULT, InstructionType.DIV]:
+            target_prefixes = ["FP_MULT"]
+        elif inst_type in [InstructionType.ADD, InstructionType.SUB]:
+            target_prefixes = ["FP_ADD"]
+        elif inst_type == InstructionType.INTEGER:
+            target_prefixes = ["INT"]
+        elif inst_type == InstructionType.BRANCH:
+            target_prefixes = ["INT"]
+
+        for idx, rs in enumerate(self.reservation_stations):
+            if not rs.busy and any(rs.name.startswith(prefix) for prefix in target_prefixes):
+                return idx
+        return None
+
+    def _get_register_value(self, reg_name: str) -> Tuple[float, Optional[str]]:
+        """Get value or ROB dependency (Q) for a register"""
+        for rf in self.register_file:
+            if rf.name == reg_name:
+                if rf.q is not None:
+                    return (0.0, rf.q)
+                return (rf.value, None)
+        return (0.0, None)
 
 
 # Global engine instance
@@ -1009,9 +990,14 @@ def load_instructions(instructions: List[Dict[str, Any]]):
 @app.post("/api/step-forward")
 def step_forward():
     """Execute one cycle forward"""
-    state = engine.step_forward()
-    return state.dict()
-
+    try:
+        state = engine.step_forward()
+        return state.dict()
+    except Exception as e:
+        print(f"Error in step_forward: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 @app.post("/api/step-backward")
 def step_backward():
@@ -1118,6 +1104,7 @@ async def load_program(request: Request):
             engine.pre_unroll_loops(iterations)
         else:
             print("Skipping pre-unroll (iterations <= 1)")
+        engine.target_iterations = iterations
         
         return engine.get_current_state().dict()
         
