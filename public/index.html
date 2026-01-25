@@ -140,54 +140,26 @@
                     <h3 class="text-sm font-semibold text-blue-400 mb-3 mono uppercase">Functional Unit Latencies</h3>
                     <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
                         <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Load/Store Latency</label>
-                            <input type="number" id="load-store-latency" min="1" max="50" value="2" 
+                            <label class="text-xs text-gray-400 mono block mb-1">INT Latency</label>
+                            <input type="number" id="int-latency" min="1" max="50" value="2" 
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Cycles for LOAD/STORE operations</div>
+                            <div class="text-xs text-gray-500 mt-1">Cycles for INT/LOAD/STORE/BRANCH operations</div>
                         </div>
                         <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Add/Sub Latency</label>
+                            <label class="text-xs text-gray-400 mono block mb-1">ADD/SUB Latency</label>
                             <input type="number" id="add-sub-latency" min="1" max="50" value="2" 
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Cycles for ADD/SUB operations</div>
                         </div>
                         <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Mult Latency</label>
+                            <label class="text-xs text-gray-400 mono block mb-1">MULT Latency</label>
                             <input type="number" id="mult-latency" min="1" max="50" value="10" 
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Cycles for MULT operations</div>
                         </div>
                         <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Div Latency</label>
+                            <label class="text-xs text-gray-400 mono block mb-1">DIV Latency</label>
                             <input type="number" id="div-latency" min="1" max="50" value="40" 
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Cycles for DIV operations</div>
                         </div>
-                    </div>
-                </div>
-
-                <!-- Hardware Configuration Section -->
-                <div>
-                    <h3 class="text-sm font-semibold text-blue-400 mb-3 mono uppercase">Hardware Configuration</h3>
-                    <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
-                        <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Issue Width</label>
-                            <input type="number" id="issue-width" min="1" max="8" value="1" 
-                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Instructions that can be issued per cycle</div>
-                        </div>
-                        <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">CDB Write Limit</label>
-                            <input type="number" id="cdb-write-limit" min="1" max="8" value="1" 
-                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Max 'Write Result' operations per cycle</div>
-                        </div>
-                        <div class="flex items-center space-x-3">
-                            <input type="checkbox" id="fu-pipelining" checked 
-                                class="w-4 h-4 bg-gray-800 border-gray-700 text-emerald-glow rounded focus:border-emerald-glow focus:ring-emerald-glow">
-                            <label for="fu-pipelining" class="text-xs text-gray-400 mono">FU Pipelining</label>
-                        </div>
-                        <div class="text-xs text-gray-500">If unchecked, FUs have structural hazards</div>
                     </div>
                 </div>
 
@@ -198,16 +170,6 @@
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">Integer Stations</label>
                             <input type="number" id="int-rs-count" min="0" max="8" value="3" 
-                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Load Stations</label>
-                            <input type="number" id="load-rs-count" min="0" max="8" value="2" 
-                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="text-xs text-gray-400 mono block mb-1">Store Stations</label>
-                            <input type="number" id="store-rs-count" min="0" max="8" value="2" 
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                         <div>
@@ -391,24 +353,15 @@
 
             // Get latency values
             const latencies = {
-                load_store: parseInt(document.getElementById('load-store-latency').value) || 2,
+                int: parseInt(document.getElementById('int-latency').value) || 2,
                 add_sub: parseInt(document.getElementById('add-sub-latency').value) || 2,
                 mult: parseInt(document.getElementById('mult-latency').value) || 10,
                 div: parseInt(document.getElementById('div-latency').value) || 40
             };
 
-            // Get hardware configuration
-            const hardware_config = {
-                issue_width: parseInt(document.getElementById('issue-width').value) || 1,
-                cdb_write_limit: parseInt(document.getElementById('cdb-write-limit').value) || 1,
-                fu_pipelining: document.getElementById('fu-pipelining').checked
-            };
-
             // Get reservation station counts
             const rs_config = {
                 int: parseInt(document.getElementById('int-rs-count').value) || 3,
-                load: parseInt(document.getElementById('load-rs-count').value) || 2,
-                store: parseInt(document.getElementById('store-rs-count').value) || 2,
                 fp_add: parseInt(document.getElementById('fp-add-rs-count').value) || 2,
                 fp_mult: parseInt(document.getElementById('fp-mult-rs-count').value) || 2
             };
@@ -426,7 +379,6 @@
                         program: programText,
                         iterations: iterations,
                         latencies: latencies,
-                        hardware_config: hardware_config,
                         rs_config: rs_config
                     })
                 });

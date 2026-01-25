@@ -123,41 +123,36 @@ class TomasuloEngine:
         
         self.reset()
     
-    def set_latencies(self, load_store: int = 2, add_sub: int = 2, mult: int = 10, div: int = 40):
+    def set_latencies(self, int_latency: int = 2, add_sub: int = 2, mult: int = 10, div: int = 40):
         """Set functional unit latencies"""
         self.latencies.update({
-            "LOAD": load_store,
-            "STORE": load_store,
+            "LOAD": int_latency,
+            "STORE": int_latency,
+            "INTEGER": int_latency,
+            "BRANCH": int_latency,
             "ADD": add_sub,
             "SUB": add_sub,
             "MULT": mult,
             "DIV": div
         })
-        print(f"Updated latencies: LOAD/STORE={load_store}, ADD/SUB={add_sub}, MULT={mult}, DIV={div}")
+        print(
+            f"Updated latencies: INT={int_latency}, ADD/SUB={add_sub}, MULT={mult}, DIV={div}"
+        )
     
-    def configure_hardware(self, issue_width: int = 1, cdb_write_limit: int = 1, fu_pipelining: bool = True):
+    def configure_hardware(self, issue_width: int = 1, cdb_write_limit: int = 1, fu_pipelining: bool = False):
         """Configure hardware settings"""
         self.issue_width = issue_width
         self.cdb_write_limit = cdb_write_limit
         self.fu_pipelining = fu_pipelining
         print(f"Hardware config: issue_width={issue_width}, cdb_write_limit={cdb_write_limit}, fu_pipelining={fu_pipelining}")
     
-    def configure_reservation_stations(self, int_count: int = 3, load_count: int = 2, 
-                                     store_count: int = 2, fp_add_count: int = 2, fp_mult_count: int = 2):
+    def configure_reservation_stations(self, int_count: int = 3, fp_add_count: int = 2, fp_mult_count: int = 2):
         """Configure reservation station counts and rebuild RS array"""
         new_reservation_stations = []
         
         # Create integer stations
         for i in range(int_count):
             new_reservation_stations.append(ReservationStation(name=f"INT{i+1}"))
-        
-        # Create load stations
-        for i in range(load_count):
-            new_reservation_stations.append(ReservationStation(name=f"LOAD{i+1}"))
-        
-        # Create store stations
-        for i in range(store_count):
-            new_reservation_stations.append(ReservationStation(name=f"STORE{i+1}"))
         
         # Create FP Add stations
         for i in range(fp_add_count):
@@ -168,11 +163,14 @@ class TomasuloEngine:
             new_reservation_stations.append(ReservationStation(name=f"FP_MULT{i+1}"))
         
         self.reservation_stations = new_reservation_stations
-        print(f"RS config: INT={int_count}, LOAD={load_count}, STORE={store_count}, FP_ADD={fp_add_count}, FP_MULT={fp_mult_count}")
+        print(f"RS config: INT={int_count}, FP_ADD={fp_add_count}, FP_MULT={fp_mult_count}")
         print(f"Total reservation stations: {len(self.reservation_stations)}")
     
     def reset(self):
         self.current_cycle = 1  # Start at Cycle 1 per textbook standards
+        self.issue_width = 1
+        self.cdb_write_limit = 1
+        self.fu_pipelining = False
         
         self.instruction_list: List[Instruction] = []
         self.state_history: List[TomasuloState] = []
@@ -209,10 +207,6 @@ class TomasuloEngine:
             ReservationStation(name="FP_ADD2"),
             ReservationStation(name="FP_MULT1"),
             ReservationStation(name="FP_MULT2"),
-            ReservationStation(name="LOAD1"),
-            ReservationStation(name="LOAD2"),
-            ReservationStation(name="STORE1"),
-            ReservationStation(name="STORE2"),
         ]
         
         # Reorder Buffer (40 entries to accommodate 27 unrolled instructions)
@@ -962,9 +956,9 @@ class TomasuloEngine:
         target_prefixes = []
 
         if inst_type == InstructionType.LOAD:
-            target_prefixes = ["LOAD"]
+            target_prefixes = ["INT"]
         elif inst_type == InstructionType.STORE:
-            target_prefixes = ["STORE"]
+            target_prefixes = ["INT"]
         elif inst_type in [InstructionType.MULT, InstructionType.DIV]:
             target_prefixes = ["FP_MULT"]
         elif inst_type in [InstructionType.ADD, InstructionType.SUB]:
@@ -1039,10 +1033,18 @@ def reset():
 @app.post("/api/config_timings")
 def config_timings(timings: Dict[str, int]):
     """Configure execution latencies for instruction types"""
-    valid_ops = {"ADD", "SUB", "MULT", "DIV", "LOAD", "STORE", "BRANCH"}
+    valid_ops = {"ADD", "SUB", "MULT", "DIV", "LOAD", "STORE", "BRANCH", "INTEGER", "INT"}
     for op, latency in timings.items():
         if op in valid_ops and latency > 0:
-            engine.latencies[op] = latency
+            if op in {"INT", "INTEGER"}:
+                engine.latencies.update({
+                    "LOAD": latency,
+                    "STORE": latency,
+                    "INTEGER": latency,
+                    "BRANCH": latency
+                })
+            else:
+                engine.latencies[op] = latency
     return {"message": "Timings updated", "latencies": engine.latencies}
 
 
@@ -1080,15 +1082,13 @@ async def load_program(request: Request):
             engine.configure_hardware(
                 issue_width=hardware_config.get("issue_width", 1),
                 cdb_write_limit=hardware_config.get("cdb_write_limit", 1),
-                fu_pipelining=hardware_config.get("fu_pipelining", True)
+                fu_pipelining=hardware_config.get("fu_pipelining", False)
             )
         
         # Configure reservation stations
         if rs_config:
             engine.configure_reservation_stations(
                 int_count=rs_config.get("int", 3),
-                load_count=rs_config.get("load", 2),
-                store_count=rs_config.get("store", 2),
                 fp_add_count=rs_config.get("fp_add", 2),
                 fp_mult_count=rs_config.get("fp_mult", 2)
             )
@@ -1096,7 +1096,7 @@ async def load_program(request: Request):
         # Set custom latencies if provided
         if latencies:
             engine.set_latencies(
-                load_store=latencies.get("load_store", 2),
+                int_latency=latencies.get("int", 2),
                 add_sub=latencies.get("add_sub", 2),
                 mult=latencies.get("mult", 10),
                 div=latencies.get("div", 40)
