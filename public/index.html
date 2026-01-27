@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,79 +27,89 @@
     </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-        
+
         body {
             font-family: 'Inter', sans-serif;
         }
-        
+
         .mono {
             font-family: 'JetBrains Mono', monospace;
         }
-        
+
         .glow-emerald {
             box-shadow: 0 0 20px rgba(16, 185, 129, 0.5), 0 0 40px rgba(16, 185, 129, 0.3);
         }
-        
+
         .glow-blue {
             box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3);
         }
-        
+
         .glow-emerald-text {
             text-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
         }
-        
+
         .table-row-hover:hover {
             background-color: rgba(16, 185, 129, 0.1);
         }
-        
+
         .status-tag {
             animation: pulse-glow 2s ease-in-out infinite;
         }
-        
+
         @keyframes pulse-glow {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.7;
+            }
         }
-        
+
         .sidebar-scroll::-webkit-scrollbar {
             width: 6px;
         }
-        
+
         .sidebar-scroll::-webkit-scrollbar-track {
             background: rgba(255, 255, 255, 0.05);
         }
-        
+
         .sidebar-scroll::-webkit-scrollbar-thumb {
             background: rgba(16, 185, 129, 0.5);
             border-radius: 3px;
         }
-        
+
         .main-scroll::-webkit-scrollbar {
             width: 8px;
             height: 8px;
         }
-        
+
         .main-scroll::-webkit-scrollbar-track {
             background: rgba(255, 255, 255, 0.05);
         }
-        
+
         .main-scroll::-webkit-scrollbar-thumb {
             background: rgba(59, 130, 246, 0.5);
             border-radius: 4px;
         }
     </style>
 </head>
+
 <body class="bg-gray-900 text-gray-100">
     <!-- Top Navigation Bar -->
     <nav class="bg-gray-800 border-b border-emerald-glow/30 px-6 py-4 shadow-lg">
         <div class="flex items-center justify-between">
             <div class="flex items-center space-x-4">
                 <div class="w-3 h-3 bg-emerald-glow rounded-full glow-emerald"></div>
-                <h1 class="text-2xl font-bold text-white mono">TOMASULO<span class="text-emerald-glow glow-emerald-text">_CPU</span>_DASHBOARD</h1>
+                <h1 class="text-2xl font-bold text-white mono">TOMASULO<span
+                        class="text-emerald-glow glow-emerald-text">_CPU</span>_DASHBOARD</h1>
             </div>
             <div class="flex items-center space-x-4">
                 <div class="text-sm text-gray-400 mono">
-                    <span class="text-emerald-glow">CYCLE:</span> <span id="navCycle" class="text-white font-semibold">0</span>
+                    <span class="text-emerald-glow">CYCLE:</span> <span id="navCycle"
+                        class="text-white font-semibold">0</span>
                 </div>
                 <div class="w-2 h-2 bg-emerald-glow rounded-full glow-emerald animate-pulse"></div>
             </div>
@@ -111,14 +122,18 @@
             <div class="p-4 border-b border-emerald-glow/20">
                 <h2 class="text-lg font-semibold text-emerald-glow mono uppercase tracking-wider">Inputs</h2>
             </div>
-            
+
             <div class="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-6">
                 <!-- Assembly Code Section -->
                 <div>
                     <h3 class="text-sm font-semibold text-blue-400 mb-3 mono uppercase">Assembly Code</h3>
                     <div class="space-y-3">
-                        <textarea id="programTextarea" rows="12" class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none resize-y" placeholder="Enter your program instructions here...&#10;&#10;Example:&#10;ADD F1 F2 F3&#10;SUB F4 F5 F6&#10;LOAD F7 100&#10;STORE F8 200"></textarea>
-                        <button class="w-full bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-glow/50 text-emerald-glow px-3 py-2 rounded text-sm font-semibold mono transition-colors glow-emerald" onclick="loadProgram()">Load Program</button>
+                        <textarea id="programTextarea" rows="12"
+                            class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2 text-sm mono focus:border-emerald-glow focus:outline-none resize-y"
+                            placeholder="Enter your program instructions here...&#10;&#10;Example:&#10;ADD F1 F2 F3&#10;SUB F4 F5 F6&#10;LOAD F7 100&#10;STORE F8 200"></textarea>
+                        <button
+                            class="w-full bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-glow/50 text-emerald-glow px-3 py-2 rounded text-sm font-semibold mono transition-colors glow-emerald"
+                            onclick="loadProgram()">Load Program</button>
                     </div>
                 </div>
 
@@ -128,9 +143,10 @@
                     <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">Loop Iterations</label>
-                            <input type="number" id="loop-iterations" min="1" max="20" value="1" 
+                            <input type="number" id="loop-iterations" min="1" max="20" value="1"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
-                            <div class="text-xs text-gray-500 mt-1">Number of times to unroll loops before simulation</div>
+                            <div class="text-xs text-gray-500 mt-1">Number of times to unroll loops before simulation
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -141,23 +157,23 @@
                     <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">INT Latency</label>
-                            <input type="number" id="int-latency" min="1" max="50" value="2" 
+                            <input type="number" id="int-latency" min="1" max="50" value="2"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                             <div class="text-xs text-gray-500 mt-1">Cycles for INT/LOAD/STORE/BRANCH operations</div>
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">ADD/SUB Latency</label>
-                            <input type="number" id="add-sub-latency" min="1" max="50" value="2" 
+                            <input type="number" id="add-sub-latency" min="1" max="50" value="2"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">MULT Latency</label>
-                            <input type="number" id="mult-latency" min="1" max="50" value="10" 
+                            <input type="number" id="mult-latency" min="1" max="50" value="10"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">DIV Latency</label>
-                            <input type="number" id="div-latency" min="1" max="50" value="40" 
+                            <input type="number" id="div-latency" min="1" max="50" value="40"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                     </div>
@@ -169,17 +185,39 @@
                     <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">Integer Stations</label>
-                            <input type="number" id="int-rs-count" min="0" max="8" value="3" 
+                            <input type="number" id="int-rs-count" min="0" max="8" value="3"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">FP Add Stations</label>
-                            <input type="number" id="fp-add-rs-count" min="0" max="8" value="2" 
+                            <input type="number" id="fp-add-rs-count" min="0" max="8" value="2"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                         <div>
                             <label class="text-xs text-gray-400 mono block mb-1">FP Mult Stations</label>
-                            <input type="number" id="fp-mult-rs-count" min="0" max="8" value="2" 
+                            <input type="number" id="fp-mult-rs-count" min="0" max="8" value="2"
+                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Function Units Count Section -->
+                <div>
+                    <h3 class="text-sm font-semibold text-blue-400 mb-3 mono uppercase">Function Units Count</h3>
+                    <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-3 space-y-3">
+                        <div>
+                            <label class="text-xs text-gray-400 mono block mb-1">Integer Units</label>
+                            <input type="number" id="int-fu-count" min="1" max="5" value="1"
+                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-400 mono block mb-1">ADD/SUB Units</label>
+                            <input type="number" id="add-sub-fu-count" min="1" max="5" value="1"
+                                class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-400 mono block mb-1">MULT/DIV Units</label>
+                            <input type="number" id="mult-div-fu-count" min="1" max="5" value="1"
                                 class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-2 py-1 text-sm mono focus:border-emerald-glow focus:outline-none">
                         </div>
                     </div>
@@ -187,110 +225,172 @@
             </div>
         </aside>
 
-            <!-- Main Content Area -->
-            <main class="flex-1 overflow-y-auto main-scroll bg-gray-900 p-6">
-                <div class="mb-4">
-                    <h2 class="text-xl font-bold text-white mono uppercase tracking-wider border-b border-blue-600/30 pb-2"></h2>
-                </div>
-                
-                <div class="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-6">
-                    <!-- Instruction Queue -->
-                    <div>
-                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Instruction Queue</h3>
-                        <div class="overflow-x-auto mt-3">
-                            <table class="w-full text-sm mono">
-                                <thead class="bg-gray-800/80">
-                                    <tr>
-                                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Iteration</th>
-                                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Instruction</th>
-                                        <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Issues at</th>
-                                        <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Executes/memory</th>
-                                        <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Write CDB at</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="instructionQueueBody" class="divide-y divide-gray-700">
-                                    <tr>
-                                        <td colspan="5" class="px-4 py-8 text-center text-gray-500">No instructions loaded</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+        <!-- Main Content Area -->
+        <main class="flex-1 overflow-y-auto main-scroll bg-gray-900 p-6">
+            <div class="mb-4">
+                <h2 class="text-xl font-bold text-white mono uppercase tracking-wider border-b border-blue-600/30 pb-2">
+                </h2>
+            </div>
 
-                    <!-- Reservation Stations -->
-                    <div>
-                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Reservation Stations</h3>
-                    </div>
-                    <div class="overflow-x-auto">
+            <div class="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-6">
+                <!-- Instruction Queue -->
+                <div>
+                    <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Instruction Queue</h3>
+                    <div class="overflow-x-auto mt-3">
                         <table class="w-full text-sm mono">
                             <thead class="bg-gray-800/80">
                                 <tr>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Time</th>
-                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Name</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Busy</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Op</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Vj</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Vk</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Qj</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Qk</th>
-                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Dest</th>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                        Iteration</th>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                        Instruction</th>
+                                    <th
+                                        class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                        Issues at</th>
+                                    <th
+                                        class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                        Executes/memory</th>
+                                    <th
+                                        class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                        Write CDB at</th>
                                 </tr>
                             </thead>
-                            <tbody id="rsBody" class="divide-y divide-gray-700">
-                                <!-- Dynamic content -->
+                            <tbody id="instructionQueueBody" class="divide-y divide-gray-700">
+                                <tr>
+                                    <td colspan="5" class="px-4 py-8 text-center text-gray-500">No instructions loaded
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
 
-                <!-- Execution Units -->
+                <!-- Reservation Stations -->
                 <div>
-                    <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Execution Units</h3>
+                    <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Reservation Stations</h3>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm mono">
                         <thead class="bg-gray-800/80">
                             <tr>
-                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">FU</th>
-                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Op</th>
-                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">Remaining</th>
-                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">ROB</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Time</th>
+                                <th
+                                    class="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Name</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Busy</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Op</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Vj</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Vk</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Qj</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Qk</th>
+                                <th
+                                    class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                    Dest</th>
                             </tr>
                         </thead>
-                        <tbody id="euBody" class="divide-y divide-gray-700">
+                        <tbody id="rsBody" class="divide-y divide-gray-700">
                             <!-- Dynamic content -->
                         </tbody>
                     </table>
                 </div>
+            </div>
 
-                <!-- Register File Grid -->
-                <div class="bg-gray-800/50 border border-emerald-glow/20 rounded-lg overflow-hidden shadow-xl">
-                    <div class="bg-gray-800 px-4 py-3 border-b border-emerald-glow/20">
-                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Register File (F0 - F31)</h3>
+            <!-- Execution Units -->
+            <div>
+                <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Execution Units</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm mono">
+                    <thead class="bg-gray-800/80">
+                        <tr>
+                            <th
+                                class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                FU</th>
+                            <th
+                                class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                Op</th>
+                            <th
+                                class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                Remaining</th>
+                            <th
+                                class="px-4 py-3 text-center text-xs font-semibold text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                                ROB</th>
+                        </tr>
+                    </thead>
+                    <tbody id="euBody" class="divide-y divide-gray-700">
+                        <!-- Dynamic content -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Detailed Execution Unit Status Box -->
+            <div class="mt-8 mb-4">
+                <div class="bg-gray-800/80 border border-emerald-glow/30 rounded-lg overflow-hidden shadow-lg">
+                    <div
+                        class="bg-gray-800 px-4 py-3 border-b border-emerald-glow/20 flex justify-between items-center">
+                        <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Detailed Execution Units
+                            Status</h3>
+                        <div class="text-xs text-gray-400 mono">Monitor individual hardware resources</div>
                     </div>
-                    <div class="p-4">
-                        <div id="rfBody" class="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-16 gap-3">
+                    <div class="p-4 bg-gray-900/50">
+                        <div id="detailedFuBody" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             <!-- Dynamic content -->
+                            <div class="col-span-full text-center py-4 text-gray-500 text-sm mono">Loading execution
+                                units...</div>
                         </div>
                     </div>
                 </div>
             </div>
-        </main>
+
+            <!-- Register File Grid -->
+            <div class="bg-gray-800/50 border border-emerald-glow/20 rounded-lg overflow-hidden shadow-xl">
+                <div class="bg-gray-800 px-4 py-3 border-b border-emerald-glow/20">
+                    <h3 class="text-sm font-semibold text-emerald-glow mono uppercase">Register File (F0 - F31)</h3>
+                </div>
+                <div class="p-4">
+                    <div id="rfBody" class="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-16 gap-3">
+                        <!-- Dynamic content -->
+                    </div>
+                </div>
+            </div>
+    </div>
+    </main>
     </div>
 
     <!-- Control Buttons at Bottom -->
-    <div class="fixed bottom-0 left-0 right-0 bg-gray-800/95 border-t border-emerald-glow/30 px-6 py-4 shadow-2xl backdrop-blur-sm">
+    <div
+        class="fixed bottom-0 left-0 right-0 bg-gray-800/95 border-t border-emerald-glow/30 px-6 py-4 shadow-2xl backdrop-blur-sm">
         <div class="flex items-center justify-center space-x-6">
-            <button onclick="stepBackward()" class="px-8 py-4 bg-deep-blue-dark hover:bg-deep-blue-dark/80 border-2 border-deep-blue-light text-white font-bold text-lg mono rounded-lg transition-all transform hover:scale-105 glow-blue">
+            <button onclick="stepBackward()"
+                class="px-8 py-4 bg-deep-blue-dark hover:bg-deep-blue-dark/80 border-2 border-deep-blue-light text-white font-bold text-lg mono rounded-lg transition-all transform hover:scale-105 glow-blue">
                 STEP BACKWARD
             </button>
-            <button onclick="stepForward()" class="px-8 py-4 bg-emerald-dark hover:bg-emerald-dark/80 border-2 border-emerald-glow text-white font-bold text-lg mono rounded-lg transition-all transform hover:scale-105 glow-emerald">
+            <button onclick="stepForward()"
+                class="px-8 py-4 bg-emerald-dark hover:bg-emerald-dark/80 border-2 border-emerald-glow text-white font-bold text-lg mono rounded-lg transition-all transform hover:scale-105 glow-emerald">
                 STEP FORWARD
             </button>
-            <button onclick="reset()" class="px-6 py-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 font-semibold text-sm mono rounded-lg transition-all">
+            <button onclick="reset()"
+                class="px-6 py-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 font-semibold text-sm mono rounded-lg transition-all">
                 RESET
             </button>
-            <button onclick="loadState()" class="px-6 py-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 font-semibold text-sm mono rounded-lg transition-all">
+            <button onclick="loadState()"
+                class="px-6 py-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 font-semibold text-sm mono rounded-lg transition-all">
                 REFRESH
             </button>
         </div>
@@ -303,11 +403,11 @@
 
         function updateInstructionInputs() {
             document.querySelectorAll('.inst-type').forEach(select => {
-                select.addEventListener('change', function() {
+                select.addEventListener('change', function () {
                     const entry = this.closest('.instruction-entry');
                     const addrInput = entry.querySelector('.inst-addr');
                     const src2Input = entry.querySelector('.inst-src2');
-                    
+
                     if (this.value === 'LOAD' || this.value === 'STORE') {
                         addrInput.style.display = 'block';
                         src2Input.style.display = 'none';
@@ -366,6 +466,13 @@
                 fp_mult: parseInt(document.getElementById('fp-mult-rs-count').value) || 2
             };
 
+            // Get functional unit counts
+            const fu_config = {
+                int: parseInt(document.getElementById('int-fu-count').value) || 1,
+                add_sub: parseInt(document.getElementById('add-sub-fu-count').value) || 1,
+                mult_div: parseInt(document.getElementById('mult-div-fu-count').value) || 1
+            };
+
             if (!programText) {
                 alert('Please enter a program in the text area');
                 return;
@@ -379,7 +486,8 @@
                         program: programText,
                         iterations: iterations,
                         latencies: latencies,
-                        rs_config: rs_config
+                        rs_config: rs_config,
+                        fu_config: fu_config
                     })
                 });
 
@@ -485,7 +593,7 @@
             if (inst.iteration && inst.iteration > 1) {
                 iterationText = `[Iter ${inst.iteration}] `;
             }
-            
+
             if (inst.type === 'LOAD') {
                 return `${iterationText}${inst.type} ${inst.dest} = [${inst.address}]`;
             } else if (inst.type === 'STORE') {
@@ -506,7 +614,7 @@
                 const instQueueBody = document.getElementById('instructionQueueBody');
                 if (state.instructions && state.instructions.length > 0) {
                     const currentPC = state.stats?.instructions_issued || 0;
-                    
+
                     instQueueBody.innerHTML = state.instructions.map((inst, idx) => {
                         // Use exact backend keys with robust fallbacks
                         const iteration = inst.iteration || 0;
@@ -514,11 +622,11 @@
                         const issueStatus = inst.issue_at ? inst.issue_at : '';
                         const execStatus = inst.exec_start ? inst.exec_start : '';
                         const writeStatus = inst.write_cdb ? inst.write_cdb : '';
-                        
+
                         // Highlight current instruction (PC)
                         const isCurrentPC = idx === currentPC;
                         const rowClass = isCurrentPC ? 'bg-emerald-900/30 border-l-4 border-emerald-glow' : 'table-row-hover';
-                        
+
                         return `
                             <tr class="${rowClass}" id="inst-row-${idx}">
                                 <td class="px-4 py-3 text-gray-300">${iteration}</td>
@@ -539,7 +647,7 @@
                     rsBody.innerHTML = state.reservation_stations.map(rs => {
                         const busyClass = rs.busy ? 'text-emerald-glow font-semibold' : 'text-gray-500';
                         const rowClass = rs.busy ? 'bg-emerald-900/10' : '';
-                        
+
                         return `
                             <tr class="table-row-hover ${rowClass}">
                                 <td class="px-4 py-3 text-center text-gray-400">${rs.time !== undefined && rs.time !== null ? rs.time : '-'}</td>
@@ -565,7 +673,7 @@
                         const hasQi = rf.q && rf.q !== '-';
                         const statusColor = hasQi ? 'border-blue-400/50 bg-blue-900/20' : 'border-gray-700 bg-gray-900/30';
                         const statusText = hasQi ? `<span class="text-xs text-blue-400 mono">Qi: ${rf.q}</span>` : '';
-                        
+
                         return `
                             <div class="bg-gray-900/50 ${statusColor} border rounded-lg p-2 text-center">
                                 <div class="text-xs text-emerald-glow font-semibold mono mb-1">${rf.name}</div>
@@ -576,7 +684,7 @@
                     }).join('');
                 } else {
                     // Generate F0-F31 if register_file is not available
-                    rfBody.innerHTML = Array.from({length: 32}, (_, i) => {
+                    rfBody.innerHTML = Array.from({ length: 32 }, (_, i) => {
                         return `
                             <div class="bg-gray-900/50 border border-gray-700 rounded-lg p-2 text-center">
                                 <div class="text-xs text-emerald-glow font-semibold mono mb-1">F${i}</div>
@@ -585,6 +693,79 @@
                         `;
                     }).join('');
                 }
+
+                // Update Detailed Execution Units
+                const detailedFuBody = document.getElementById('detailedFuBody');
+                if (state.fu_counts) {
+                    const fuTypes = [
+                        { type: 'INT', label: 'Integer Unit' },
+                        { type: 'ADD_SUB', label: 'Adder' },
+                        { type: 'MULT_DIV', label: 'Multiplier' }
+                    ];
+
+                    let html = '';
+
+                    fuTypes.forEach(ft => {
+                        const count = state.fu_counts[ft.type] || 1;
+
+                        for (let i = 0; i < count; i++) {
+                            // Find if this unit is busy
+                            const activeUnit = state.execution_units ? state.execution_units.find(
+                                u => u.fu_type === ft.type && u.unit_instance_index === i
+                            ) : null;
+
+                            const isBusy = !!activeUnit;
+                            const statusColor = isBusy ? 'border-amber-500/50 bg-amber-900/20' : 'border-emerald-500/30 bg-emerald-900/10';
+                            const statusText = isBusy ? 'BUSY' : 'READY';
+                            const statusTextColor = isBusy ? 'text-amber-400' : 'text-emerald-400';
+
+                            let content = `
+                                <div class="flex justify-between items-center mb-2">
+                                    <div class="text-xs font-bold text-gray-300 mono">${ft.label} #${i + 1}</div>
+                                    <div class="text-[10px] font-bold ${statusTextColor} border border-current px-1.5 py-0.5 rounded mono">${statusText}</div>
+                                </div>
+                            `;
+
+                            if (isBusy) {
+                                content += `
+                                    <div class="space-y-1.5">
+                                        <div class="flex justify-between text-xs mono">
+                                            <span class="text-gray-400">Op:</span>
+                                            <span class="text-white font-semibold">${activeUnit.op}</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs mono">
+                                            <span class="text-gray-400">Target:</span>
+                                            <span class="text-blue-300">ROB ${activeUnit.rob_idx}</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs mono">
+                                            <span class="text-gray-400">Cycles Left:</span>
+                                            <span class="text-amber-400 font-bold">${activeUnit.remaining}</span>
+                                        </div>
+                                        <div class="mt-2 pt-2 border-t border-gray-700/50 flex justify-between text-[10px] mono text-gray-500">
+                                            <span>Trace: ${activeUnit.trace_idx}</span>
+                                            <span>Vj: ${activeUnit.vj !== null ? activeUnit.vj : '-'}</span>
+                                        </div>
+                                    </div>
+                                `;
+                            } else {
+                                content += `
+                                    <div class="flex items-center justify-center h-20 text-xs text-emerald-500/30 mono">
+                                        Waiting for instruction...
+                                    </div>
+                                `;
+                            }
+
+                            html += `
+                                <div class="border ${statusColor} rounded-lg p-3 transition-all duration-300">
+                                    ${content}
+                                </div>
+                            `;
+                        }
+                    });
+
+                    detailedFuBody.innerHTML = html;
+                }
+
             } catch (error) {
                 console.error('Error updating UI:', error);
                 // Show error in instruction queue instead of crashing
@@ -597,4 +778,5 @@
         loadState();
     </script>
 </body>
+
 </html>

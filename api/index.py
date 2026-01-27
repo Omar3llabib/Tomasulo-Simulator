@@ -88,6 +88,7 @@ class ExecutionUnitEntry(BaseModel):
     vj: Optional[float] = None
     vk: Optional[float] = None
     a: Optional[int] = None
+    unit_instance_index: int = 0  # Which specific unit instance (0, 1, 2...)
 
 
 class RegisterFileEntry(BaseModel):
@@ -145,6 +146,19 @@ class TomasuloEngine:
         self.cdb_write_limit = cdb_write_limit
         self.fu_pipelining = fu_pipelining
         print(f"Hardware config: issue_width={issue_width}, cdb_write_limit={cdb_write_limit}, fu_pipelining={fu_pipelining}")
+
+    def configure_functional_units(self, int_count: int = 1, add_sub_count: int = 1, mult_div_count: int = 1, load_count: int = None, store_count: int = None):
+        """Configure number of functional units per type. load_count and store_count are ignored as they use INT units."""
+        self.fu_counts = {
+            "INT": int_count,
+            "ADD_SUB": add_sub_count,
+            "MULT_DIV": mult_div_count
+        }
+        # Re-initialize busy state
+        self.fu_busy_until = {
+            k: [0] * v for k, v in self.fu_counts.items()
+        }
+        print(f"FU Config (LOAD/STORE use INT): {self.fu_counts}")
     
     def configure_reservation_stations(self, int_count: int = 3, fp_add_count: int = 2, fp_mult_count: int = 2):
         """Configure reservation station counts and rebuild RS array"""
@@ -192,8 +206,16 @@ class TomasuloEngine:
         # TRACE STORAGE
         self.trace: List[TraceEntry] = []
         
-        # Track non-pipelined FU occupancy (fu_type -> busy until cycle)
-        self.fu_busy_until: Dict[str, int] = {}
+        # Track non-pipelined FU occupancy (fu_type -> list of busy until cycles for each instance)
+        # Default to 1 of each if not configured yet
+        if not hasattr(self, 'fu_counts'):
+            self.fu_counts = {
+                "INT": 1, "ADD_SUB": 1, "MULT_DIV": 1
+            }
+            
+        self.fu_busy_until: Dict[str, List[int]] = {
+            k: [0] * v for k, v in self.fu_counts.items()
+        }
         
         # Execution units (in-flight execution)
         self.execution_units: List[ExecutionUnitEntry] = []
@@ -725,16 +747,36 @@ class TomasuloEngine:
                 elif rs.op in ["MULT", "DIV"]:
                     fu_type = "MULT_DIV"
                 elif rs.op == "LOAD":
-                    fu_type = "LOAD"
+                    fu_type = "INT"
                 elif rs.op == "STORE":
-                    fu_type = "STORE"
+                    fu_type = "INT"
                 elif rs.op == "BRANCH":
                     fu_type = "INT"
                 elif rs.op in ["INTEGER", "ADDI", "SLTU"]:
                     fu_type = "INT"
 
-                busy_until = self.fu_busy_until.get(fu_type, 0)
-                fu_available = self.fu_pipelining or (fu_type not in fu_in_use and self.current_cycle > busy_until)
+                busy_until_list = self.fu_busy_until.get(fu_type, [0])
+                
+                # improved Logic: Find FIRST available unit instance
+                found_instance_idx = -1
+                
+                # Check each instance of this FU type
+                for idx, busy_until in enumerate(busy_until_list):
+                    is_this_instance_busy = False
+                    
+                    # Check if this specific instance is already in self.execution_units
+                    for eu in self.execution_units:
+                        if eu.fu_type == fu_type and eu.unit_instance_index == idx:
+                            is_this_instance_busy = True
+                            break
+                    
+                    if not is_this_instance_busy:
+                        # Also check the busy_until time (for non-pipelined delay)
+                        if self.fu_pipelining or self.current_cycle > busy_until:
+                            found_instance_idx = idx
+                            break
+                
+                fu_available = (found_instance_idx != -1)
 
                 if operands_ready and cdb_ready and rs.time is None and fu_available:
                     trace_idx = self.rob_to_instruction.get(rs.dest)
@@ -761,13 +803,14 @@ class TomasuloEngine:
                                 trace_idx=trace_idx,
                                 vj=rs.vj,
                                 vk=rs.vk,
-                                a=rs.a
+                                a=rs.a,
+                                unit_instance_index=found_instance_idx
                             )
                         )
 
                     if not self.fu_pipelining:
-                        fu_in_use.add(fu_type)
-                        self.fu_busy_until[fu_type] = self.current_cycle + exec_cycles - 1
+                        # Mark this specific instance as busy
+                        self.fu_busy_until[fu_type][found_instance_idx] = self.current_cycle + exec_cycles - 1
 
                     if rs.op == "BRANCH":
                         self.loop_ready_cycle = self.current_cycle + 1
@@ -999,7 +1042,9 @@ def step_forward():
     """Execute one cycle forward"""
     try:
         state = engine.step_forward()
-        return state.dict()
+        state_dict = state.dict()
+        state_dict["fu_counts"] = engine.fu_counts
+        return state_dict
     except Exception as e:
         print(f"Error in step_forward: {e}")
         import traceback
@@ -1011,7 +1056,9 @@ def step_backward():
     """Go back one cycle"""
     state = engine.step_backward()
     if state:
-        return state.dict()
+        state_dict = state.dict()
+        state_dict["fu_counts"] = engine.fu_counts
+        return state_dict
     return {"error": "Cannot go back further"}
 
 
@@ -1019,7 +1066,10 @@ def step_backward():
 def get_state():
     """Get current state"""
     state = engine.get_current_state()
-    return state.dict()
+    # Augment state with total unit counts for UI rendering
+    state_dict = state.dict()
+    state_dict["fu_counts"] = engine.fu_counts
+    return state_dict
 
 
 @app.post("/api/reset")
@@ -1027,7 +1077,9 @@ def reset():
     """Reset the simulator"""
     engine.reset()
     state = engine.get_current_state()
-    return state.dict()
+    state_dict = state.dict()
+    state_dict["fu_counts"] = engine.fu_counts
+    return state_dict
 
 
 @app.post("/api/config_timings")
@@ -1061,8 +1113,9 @@ async def load_program(request: Request):
             latencies = data.get("latencies", {})
             hardware_config = data.get("hardware_config", {})
             rs_config = data.get("rs_config", {})
+            fu_config = data.get("fu_config", {})
             print(f"Received JSON request: iterations={iterations}, latencies={latencies}")
-            print(f"Hardware config: {hardware_config}, RS config: {rs_config}")
+            print(f"Hardware config: {hardware_config}, RS config: {rs_config}, FU config: {fu_config}")
         else:
             body = await request.body()
             program_text = body.decode('utf-8')
@@ -1070,6 +1123,7 @@ async def load_program(request: Request):
             latencies = {}
             hardware_config = {}
             rs_config = {}
+            fu_config = {}
             print(f"Received raw text request")
 
         print(f"Program text: {repr(program_text)}")
@@ -1091,6 +1145,16 @@ async def load_program(request: Request):
                 int_count=rs_config.get("int", 3),
                 fp_add_count=rs_config.get("fp_add", 2),
                 fp_mult_count=rs_config.get("fp_mult", 2)
+            )
+        
+        # Configure functional units
+        if fu_config:
+            engine.configure_functional_units(
+                int_count=fu_config.get("int", 1),
+                add_sub_count=fu_config.get("add_sub", 1),
+                mult_div_count=fu_config.get("mult_div", 1),
+                load_count=fu_config.get("load", 1),
+                store_count=fu_config.get("store", 1)
             )
         
         # Set custom latencies if provided
